@@ -21,20 +21,32 @@ Locked decisions tracked in [`DECISIONS.md`](DECISIONS.md).
 
 Tier 1, Phase 1 (Data) — in progress.
 
-## Quickstart (Windows PowerShell)
+## Quickstart
+
+Run from the repo root (wherever it lives — paths inside the scripts are
+relative to `src/`, so the project is portable).
+
+**Windows PowerShell:**
 
 ```powershell
-# One-time setup
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-# edit .env and paste NPS_API_KEY and DATABASE_URL
+notepad .env                      # paste NPS_API_KEY and DATABASE_URL
+python -m src.data_pull           # Phase 1A — NPS API → PostGIS
+python -m src.spatial_join        # Phase 1B — state assignment + coverage gate
+```
 
-# Phase 1 — pull NPS catalog into PostGIS
+**Linux / macOS (e.g. BRONTOSAURUS):**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+$EDITOR .env                      # paste NPS_API_KEY and DATABASE_URL
 python -m src.data_pull
-
-# Phase 1 — assign state to every POI + validate coverage
 python -m src.spatial_join
 ```
 
