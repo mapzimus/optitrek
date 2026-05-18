@@ -19,7 +19,10 @@ Locked decisions tracked in [`DECISIONS.md`](DECISIONS.md).
 
 ## Status
 
-Tier 1, Phase 1 (Data) — in progress.
+Tier 1, Phase 1 (Data) — **complete**. Phases 2–4 code is written + tested
+but not yet run end-to-end (needs OSRM running). See
+[`HANDOVER.md`](HANDOVER.md) for current state, known caveats, and the
+next-session checklist.
 
 ## Quickstart
 
