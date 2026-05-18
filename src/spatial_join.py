@@ -82,7 +82,22 @@ def _spatial_join(engine) -> None:
              WHERE p.source = 'nps'
                AND ST_Contains(s.geometry, p.geom)
         """))
-        print(f"   {result.rowcount} rows assigned a state")
+        print(f"   {result.rowcount} rows assigned a state via ST_Contains")
+
+        # Fallback: a few NPS units have coordinates outside US state polygons
+        # (e.g. Roosevelt Campobello International Park, jointly run with
+        # Canada, sits on a New Brunswick island). The NPS API still tells
+        # us which state they belong to via the `states` field. Use the
+        # first 2-letter code from that field as the assignment.
+        fallback = conn.execute(text("""
+            UPDATE pois
+               SET state = UPPER(SPLIT_PART(tags->>'api_states', ',', 1))
+             WHERE source = 'nps'
+               AND state IS NULL
+               AND tags->>'api_states' ~ '^[A-Za-z]{2}'
+        """))
+        if fallback.rowcount:
+            print(f"   {fallback.rowcount} additional row(s) assigned via api_states fallback")
 
 
 def _coverage_report(engine) -> bool:
@@ -121,13 +136,24 @@ def _coverage_report(engine) -> bool:
             print(f"   note: {z} has {counts[z]} units; excluded from Tier 1 solver per DECISIONS.md")
 
     print()
-    print(">> Coverage OK — all 48 contiguous states + DC have ≥1 NPS unit.")
+    print(">> Coverage OK -- all 48 contiguous states + DC have >=1 NPS unit.")
     return True
+
+
+def _sqlalchemy_url() -> str:
+    """SQLAlchemy picks the psycopg2 driver by default for `postgresql://`.
+    We have psycopg v3 installed (not psycopg2), so rewrite the scheme."""
+    dsn = get_dsn()
+    if dsn.startswith("postgresql://"):
+        dsn = "postgresql+psycopg://" + dsn[len("postgresql://"):]
+    elif dsn.startswith("postgres://"):
+        dsn = "postgresql+psycopg://" + dsn[len("postgres://"):]
+    return dsn
 
 
 def main() -> int:
     _download_tiger()
-    engine = create_engine(get_dsn())
+    engine = create_engine(_sqlalchemy_url())
     _load_to_postgis(engine)
     _spatial_join(engine)
     ok = _coverage_report(engine)

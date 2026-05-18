@@ -8,12 +8,16 @@ pyarrow>=17.0
 sqlalchemy>=2.0          # geopandas.to_postgis() requires SQLAlchemy
 geoalchemy2>=0.15        # geopandas → PostGIS geometry types
 
-# Phase 2 — OSRM matrix building (added when Phase 2 starts)
-# (no extra deps; uses requests + pyarrow)
+# Phase 2 — OSRM matrix building (uses requests + numpy + pyarrow)
+numpy>=1.26
 
-# Phase 3 — solver (added when Phase 3 starts)
-# ortools>=9.10
+# Phase 3 — solver
+ortools>=9.10
 
-# Phase 4 — visualization (added when Phase 4 starts)
-# folium>=0.17
-# branca>=0.7
+# Phase 4 — visualization
+folium>=0.17
+branca>=0.7
+polyline>=2.0            # decode OSRM-encoded route polylines
+
+# Tests
+pytest>=8.0

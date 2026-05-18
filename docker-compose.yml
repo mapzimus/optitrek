@@ -1,21 +1,29 @@
 # Optitrek — OSRM routing engine
 #
-# Stub for Phase 2. To activate:
-#   1. Download us-latest.osm.pbf from Geofabrik into ./data/osrm/
-#   2. Run osrm-backend extract/partition/customize against it (see Tier 1 doc Phase 2)
-#   3. Uncomment the service below and `docker compose up -d osrm`
+# Bring-up:
+#   1. ./scripts/build_osrm.sh    # downloads us-latest.osm.pbf, runs the
+#                                 # three osrm-backend processing stages
+#   2. docker compose up -d osrm  # starts the routed server on :5000
+#
+# Health check:
+#   curl http://localhost:5000/route/v1/driving/-77.0365,38.8977;-71.0589,42.3601
 #
 # Decision D3: US-only extract — prevents routing through Canada.
 
-# version: "3.9"
-#
-# services:
-#   osrm:
-#     image: ghcr.io/project-osrm/osrm-backend:latest
-#     container_name: optitrek-osrm
-#     command: osrm-routed --algorithm mld /data/us-latest.osrm
-#     volumes:
-#       - ./data/osrm:/data
-#     ports:
-#       - "5000:5000"
-#     restart: unless-stopped
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: optitrek-osrm
+    # --max-table-size raised so /table can handle a 400+ POI source batch.
+    command: osrm-routed --algorithm mld --max-table-size 8000 /data/us-latest.osrm
+    volumes:
+      - ./data/osrm:/data
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/route/v1/driving/-77.0,38.9;-77.0,38.9 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

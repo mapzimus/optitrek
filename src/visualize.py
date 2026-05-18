@@ -1,0 +1,196 @@
+"""Phase 4 — render an interactive Folium map from a solver result.
+
+Pure-Python interface: takes the SolveResult and (optionally) OSRM-fetched
+leg geometries, produces a standalone HTML file. No DB required at render
+time; the SolveResult carries all the info we need plus we look up the leg
+polylines from OSRM at render time.
+
+Run from D:\\optitrek as a script (loads the saved matrix + reruns the solver
++ renders), or import render_map() from another script with a SolveResult in
+hand.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+import folium
+import polyline as polyline_lib
+import requests
+
+from src.solver import Node, SolveResult
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OSRM_URL = "http://localhost:5000"
+DEFAULT_OUTPUT = REPO_ROOT / "output" / "optitrek_map.html"
+
+# Visual styling. Tweak here, don't sprinkle through code.
+ROUTE_COLOR = "#2c5f8d"
+ROUTE_WEIGHT = 4
+ROUTE_OPACITY = 0.85
+MARKER_COLOR = "darkblue"
+MARKER_ICON = "flag"
+TILE_LAYER = "CartoDB positron"  # neutral background, route stands out
+INITIAL_CENTER = (39.5, -98.35)  # geographic center of contiguous US
+INITIAL_ZOOM = 4
+
+
+@dataclass(frozen=True)
+class StopGeo:
+    """A stop with the lat/lon needed to place a marker. Solver Node carries
+    only id + state; the caller has to provide coords from the POI table."""
+
+    node: Node
+    lat: float
+    lon: float
+    label: str           # what shows in the marker popup (name, designation)
+
+
+def _osrm_route_polyline(
+    a: StopGeo, b: StopGeo, osrm_url: str, timeout: int = 30
+) -> list[tuple[float, float]]:
+    """Fetch the real road polyline between two stops from OSRM. Returns
+    a list of (lat, lon). Falls back to a straight line if OSRM is
+    unreachable so the map still renders."""
+    url = (
+        f"{osrm_url.rstrip('/')}/route/v1/driving/"
+        f"{a.lon:.6f},{a.lat:.6f};{b.lon:.6f},{b.lat:.6f}"
+        f"?overview=full&geometries=polyline"
+    )
+    try:
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        blob = resp.json()
+        if blob.get("code") != "Ok" or not blob.get("routes"):
+            return [(a.lat, a.lon), (b.lat, b.lon)]
+        encoded = blob["routes"][0]["geometry"]
+        # OSRM polyline default precision is 5 (matches polyline lib default).
+        return polyline_lib.decode(encoded)
+    except (requests.RequestException, ValueError):
+        return [(a.lat, a.lon), (b.lat, b.lon)]
+
+
+def _summary_html(
+    result: SolveResult,
+    stop_count: int,
+    state_count: int,
+) -> str:
+    """Inline HTML widget showing trip stats in the corner of the map."""
+    hours = result.total_cost / 3600.0
+    days_at_8h = hours / 8.0
+    return f"""
+    <div style="position: fixed; top: 12px; right: 12px; z-index: 9999;
+                background: white; padding: 12px 16px; border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                font: 13px/1.4 system-ui, -apple-system, sans-serif;
+                max-width: 280px;">
+      <div style="font-weight:600; font-size:15px; margin-bottom:6px;">
+        Optitrek route
+      </div>
+      <div>Stops: <b>{stop_count}</b></div>
+      <div>States covered: <b>{state_count}</b></div>
+      <div>Total drive time: <b>{hours:,.1f} h</b> ({days_at_8h:,.1f} days @ 8h/day)</div>
+      <div style="color:#666; margin-top:6px; font-size:11px;">
+        solver status: {result.status}
+      </div>
+    </div>
+    """
+
+
+def render_map(
+    result: SolveResult,
+    stop_geo: dict,           # node.id → StopGeo
+    *,
+    output_path: Path = DEFAULT_OUTPUT,
+    osrm_url: str | None = None,
+    use_road_geometry: bool = True,
+) -> Path:
+    """Build the Folium map and write it to output_path. Returns the path."""
+    if not result.order:
+        raise ValueError("SolveResult has no route to render")
+
+    osrm_url = osrm_url or os.environ.get("OSRM_URL", DEFAULT_OSRM_URL)
+
+    m = folium.Map(
+        location=INITIAL_CENTER,
+        zoom_start=INITIAL_ZOOM,
+        tiles=TILE_LAYER,
+        control_scale=True,
+    )
+
+    # Resolve geo for every visited node.
+    geos: list[StopGeo] = []
+    for node in result.order:
+        if node.id not in stop_geo:
+            raise KeyError(f"stop_geo missing entry for node {node.id!r}")
+        geos.append(stop_geo[node.id])
+
+    # Draw the route as a closed loop: order[0] → order[1] → … → order[-1] → order[0].
+    for i in range(len(geos)):
+        a, b = geos[i], geos[(i + 1) % len(geos)]
+        coords = (
+            _osrm_route_polyline(a, b, osrm_url)
+            if use_road_geometry
+            else [(a.lat, a.lon), (b.lat, b.lon)]
+        )
+        folium.PolyLine(
+            coords,
+            color=ROUTE_COLOR,
+            weight=ROUTE_WEIGHT,
+            opacity=ROUTE_OPACITY,
+        ).add_to(m)
+
+    # Numbered markers at each stop. Stop 1 = depot (always order[0]).
+    for i, geo in enumerate(geos, start=1):
+        folium.Marker(
+            location=(geo.lat, geo.lon),
+            tooltip=f"#{i} — {geo.node.state} — {geo.label}",
+            popup=folium.Popup(
+                html=(
+                    f"<b>Stop {i}: {geo.label}</b><br>"
+                    f"State: {geo.node.state}<br>"
+                    f"<small>park_id: {geo.node.id}</small>"
+                ),
+                max_width=300,
+            ),
+            icon=folium.Icon(color=MARKER_COLOR, icon=MARKER_ICON, prefix="fa"),
+        ).add_to(m)
+
+    # Summary panel
+    m.get_root().html.add_child(folium.Element(_summary_html(
+        result,
+        stop_count=len(geos),
+        state_count=len(result.states_covered),
+    )))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    m.save(str(output_path))
+    return output_path
+
+
+def stop_geos_from_poi_table(
+    nodes: Iterable[Node],
+    poi_rows: list[dict],
+) -> dict:
+    """Helper: given the solver's nodes (id+state) and the POI rows used to
+    build the matrix (with name, lat, lon, etc.), produce the StopGeo lookup
+    that render_map() needs. Matches by node.id == poi_row['id']."""
+    by_id = {row["id"]: row for row in poi_rows}
+    geos: dict = {}
+    for node in nodes:
+        row = by_id.get(node.id)
+        if row is None:
+            raise KeyError(f"no POI row found for node id {node.id!r}")
+        label = row.get("name") or f"POI {node.id}"
+        cat = row.get("category")
+        if cat:
+            label = f"{label} ({cat.replace('_', ' ')})"
+        geos[node.id] = StopGeo(
+            node=node,
+            lat=float(row["lat"]),
+            lon=float(row["lon"]),
+            label=label,
+        )
+    return geos

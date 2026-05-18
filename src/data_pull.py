@@ -149,14 +149,14 @@ def _parse_park(park: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None
 UPSERT_SQL = """
 INSERT INTO pois (name, source, category, geom, tags)
 VALUES (
-    %(name)s,
+    %(name)s::text,
     'nps',
-    %(category)s,
-    ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326),
+    %(category)s::text,
+    ST_SetSRID(ST_MakePoint(%(lon)s::float8, %(lat)s::float8), 4326),
     jsonb_build_object(
-        'park_code', %(park_code)s,
-        'designation', %(designation)s,
-        'api_states', %(api_states)s
+        'park_code',  %(park_code)s::text,
+        'designation', %(designation)s::text,
+        'api_states', %(api_states)s::text
     )
 )
 ON CONFLICT ((tags->>'park_code')) WHERE source = 'nps'
