@@ -1,0 +1,21 @@
+# Optitrek — OSRM routing engine
+#
+# Stub for Phase 2. To activate:
+#   1. Download us-latest.osm.pbf from Geofabrik into ./data/osrm/
+#   2. Run osrm-backend extract/partition/customize against it (see Tier 1 doc Phase 2)
+#   3. Uncomment the service below and `docker compose up -d osrm`
+#
+# Decision D3: US-only extract — prevents routing through Canada.
+
+# version: "3.9"
+#
+# services:
+#   osrm:
+#     image: ghcr.io/project-osrm/osrm-backend:latest
+#     container_name: optitrek-osrm
+#     command: osrm-routed --algorithm mld /data/us-latest.osrm
+#     volumes:
+#       - ./data/osrm:/data
+#     ports:
+#       - "5000:5000"
+#     restart: unless-stopped

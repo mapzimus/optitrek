@@ -1,0 +1,38 @@
+# Secrets
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data artifacts (regeneratable; raw pulls are large)
+data/nps_raw/*.json
+data/nps_raw/*.csv
+data/boundaries/*
+data/matrix/*
+!data/**/.gitkeep
+
+# OSRM extracts (huge)
+*.osm.pbf
+*.osrm
+*.osrm.*
+
+# Output
+output/*
+!output/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
