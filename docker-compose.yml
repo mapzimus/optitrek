@@ -11,6 +11,9 @@
 # Decision D3: US-only extract — prevents routing through Canada.
 
 services:
+  # FULL US network — kept for reference. Will NOT run on BRONTOSAURUS
+  # (32 GB RAM is below OSRM's actual peak; caused a BSOD on 2026-05-21).
+  # Use only on a cloud VM with >=64 GB RAM.
   osrm:
     image: ghcr.io/project-osrm/osrm-backend:latest
     container_name: optitrek-osrm
@@ -21,6 +24,26 @@ services:
     ports:
       - "5000:5000"
     restart: unless-stopped
+    profiles: ["full"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/route/v1/driving/-77.0,38.9;-77.0,38.9 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # MAJOR-ROADS network — what BRONTOSAURUS actually runs.
+  # Built from the tag-filtered PBF; artifacts ~8-12 GB.
+  osrm-major:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: optitrek-osrm-major
+    command: osrm-routed --algorithm mld --max-table-size 8000 /data/us-major.osrm
+    volumes:
+      - ./data/osrm-major:/data
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    profiles: ["major"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:5000/route/v1/driving/-77.0,38.9;-77.0,38.9 || exit 1"]
       interval: 30s
