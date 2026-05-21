@@ -8,7 +8,11 @@ import psycopg
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(REPO_ROOT / ".env")
+# override=True so the project's .env always wins over any DATABASE_URL the
+# user happens to have set in their shell (saw this bite during BRONTOSAURUS
+# bring-up — a stale shell var was silently routing queries to a different
+# Neon project). .env is the source of truth for this project.
+load_dotenv(REPO_ROOT / ".env", override=True)
 
 
 def get_dsn() -> str:

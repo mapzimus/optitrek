@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, text
 from src.db import get_dsn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(REPO_ROOT / ".env")
+load_dotenv(REPO_ROOT / ".env", override=True)  # project .env wins over shell env
 
 TIGER_URL = "https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip"
 BOUNDARY_DIR = REPO_ROOT / "data" / "boundaries"

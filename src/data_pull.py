@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from src.db import apply_schema, get_conn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(REPO_ROOT / ".env")
+load_dotenv(REPO_ROOT / ".env", override=True)  # project .env wins over shell env
 
 NPS_API_URL = "https://developer.nps.gov/api/v1/parks"
 PAGE_SIZE = 500            # API max
