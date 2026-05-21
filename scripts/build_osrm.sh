@@ -90,7 +90,10 @@ else
 fi
 
 # --- 4. osrm-customize ---
-if [[ -f "${OSRM_FILE}.cells" ]]; then
+# Sentinel is .cell_metrics (produced by osrm-customize). The old script used
+# .cells which is actually produced by osrm-partition, so customize was
+# silently skipped on the filtered build of 2026-05-21. Caught at execution.
+if [[ -f "${OSRM_FILE}.cell_metrics" ]]; then
     log "Customize artifact already present"
 else
     log "Running osrm-customize (threads=${THREADS})"
