@@ -232,23 +232,13 @@ fi
 
 Replace with:
 ```bash
-# --- 1. Ensure the source PBF exists ---
-mkdir -p "${OSRM_DIR}"
-if [[ -f "${PBF_FILE}" ]]; then
-    log "PBF already present: ${PBF_FILE} ($(du -h "${PBF_FILE}" | cut -f1))"
-elif [[ -f "${PBF_SRC}" ]]; then
-    log "Copying PBF: ${PBF_SRC} -> ${PBF_FILE}"
-    cp "${PBF_SRC}" "${PBF_FILE}"
-else
-    log "Downloading ${PBF_SRC} (this is ~10 GB — go get coffee)"
-    curl -L -C - -o "${PBF_FILE}" "${PBF_SRC}"
-fi
-```
-
-Wait — for the filtered-PBF path, we want to AVOID a second copy (the filtered PBF will already be at `data/osrm-major/us-major.osm.pbf`). Make the `cp` step a no-op when source and dest paths resolve to the same file:
-
-```bash
-# --- 1. Ensure the source PBF exists ---
+# --- 1. Ensure the source PBF exists at PBF_FILE ---
+# Three cases:
+#   - PBF_FILE already exists at destination: nothing to do
+#   - PBF_SRC is a local file that already lives at PBF_FILE: nothing to do
+#     (this is the filtered-PBF case — file is already in data/osrm-major/)
+#   - PBF_SRC is a local file elsewhere: copy it into PBF_FILE
+#   - PBF_SRC is a URL: download to PBF_FILE
 mkdir -p "${OSRM_DIR}"
 if [[ -f "${PBF_FILE}" ]]; then
     log "PBF already present: ${PBF_FILE} ($(du -h "${PBF_FILE}" | cut -f1))"
@@ -758,37 +748,36 @@ No commit — verification only.
 **Files:**
 - Modify: `E:\dev\optitrek\BUILD_STATUS.md`
 
-- [ ] **Step 1: Update BUILD_STATUS.md**
+- [ ] **Step 1: Update BUILD_STATUS.md — PREPEND, don't replace**
 
-Replace the entire `BUILD_STATUS.md` content with:
+The existing `BUILD_STATUS.md` contains today's earlier-session content (artifact migration, BSOD root cause, lessons learned). That history matters — preserve it. Use the Edit tool to insert a new "Tier 1 complete" section at the top, leaving the rest intact.
 
-```markdown
+Use Edit with:
+
+`old_string` (exact match):
+```
 # OSRM US Build — Status Snapshot
 
-**Last updated:** 2026-05-21 — Tier 1 PIPELINE COMPLETE
+**Last updated:** 2026-05-21 ~3:45 PM Eastern (build complete + validated + project migrated)
 
-## TL;DR — TIER 1 DONE
+## TL;DR — DONE
+```
+
+`new_string`:
+```
+# OSRM US Build — Status Snapshot
+
+**Last updated:** 2026-05-21 — Tier 1 pipeline complete
+
+## Tier 1 PIPELINE COMPLETE (this update)
 
 - OSRM artifacts built on filtered (major-roads-only) US PBF, ~8-12 GB at `data/osrm-major/`
 - Matrix built: 466 POIs × 466 (driving duration + distance), at `data/matrix/`
 - Tier 1 solver run in both capped and uncapped modes
 - Two output maps rendered: `output/optitrek_capped.html`, `output/optitrek_uncapped.html`
-- Validation passed: 3-route spot-check within ±5% distance / ±10% duration of full-network ground truth; 17/17 unit tests pass
+- Validation: 3-route spot-check within ±5% distance / ±10% duration of full-network ground truth; 17/17 unit tests pass
 
-## Next: Tier 1 Phase 5 — the blog post
-
-See `03-OPTITREK-TIER1-PROJECT-DOC.md` Phase 5 for the writeup brief.
-
-## Files / state
-
-- `E:\dev\optitrek\data\osrm-major\` — filtered-network OSRM artifacts (gitignored)
-- `E:\dev\optitrek\data\osrm\` — full-network archive (72.5 GB, can be deleted after blog ships)
-- `E:\dev\optitrek\data\matrix\*.parquet` — distance matrix (gitignored)
-- `E:\dev\optitrek\output\optitrek_capped.html` — capped solver output
-- `E:\dev\optitrek\output\optitrek_uncapped.html` — uncapped solver output
-- `E:\dev\optitrek\output\osrm_visual_proof.html` — earlier ground-truth visual proof (from cloud VM)
-
-## How to re-run
+### How to re-run Tier 1
 
 ```bash
 cd /e/dev/optitrek
@@ -798,12 +787,28 @@ docker compose --profile major up -d osrm-major
 docker compose --profile major down
 ```
 
-To rebuild the OSRM artifacts from scratch (only needed if Geofabrik publishes a new US extract):
+### How to rebuild OSRM artifacts from scratch
+(only needed if Geofabrik publishes a new US extract)
+
 ```bash
 ./scripts/filter_pbf.sh data/us-latest.osm.pbf data/osrm-major/us-major.osm.pbf
 ./scripts/build_osrm.sh data/osrm-major/us-major.osm.pbf data/osrm-major us-major
 ```
+
+### Next: Tier 1 Phase 5 — the blog post
+
+See `03-OPTITREK-TIER1-PROJECT-DOC.md` Phase 5 for the writeup brief.
+
+---
+
+## Earlier today (artifact migration + BSOD-driven WSL cap)
+
+**Last updated:** 2026-05-21 ~3:45 PM Eastern (build complete + validated + project migrated)
+
+## TL;DR — DONE
 ```
+
+The result: a single status doc with the latest update at top, prior history preserved below.
 
 - [ ] **Step 2: Commit**
 
