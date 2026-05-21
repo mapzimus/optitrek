@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 from src.db import get_conn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(REPO_ROOT / ".env")
+load_dotenv(REPO_ROOT / ".env", override=True)  # project .env wins over shell env
 
 MATRIX_DIR = REPO_ROOT / "data" / "matrix"
 DEFAULT_OSRM_URL = "http://localhost:5000"
@@ -64,6 +64,9 @@ def fetch_pois() -> list[dict]:
     """Pull NPS POIs from PostGIS, ordered by (state, id) so the index in the
     matrix is stable across re-runs (assuming the DB hasn't changed)."""
     with get_conn() as conn, conn.cursor() as cur:
+        # psycopg v3 does NOT expand a tuple into "IN (...)" the way psycopg2
+        # did — it sends the tuple as a single parameter and Postgres errors
+        # with 'syntax error at or near "$1"'. Use array <> ALL() instead.
         cur.execute("""
             SELECT id,
                    name,
@@ -74,9 +77,9 @@ def fetch_pois() -> list[dict]:
               FROM pois
              WHERE source = 'nps'
                AND state IS NOT NULL
-               AND state NOT IN %(excluded)s
+               AND state <> ALL(%(excluded)s)
              ORDER BY state, id
-        """, {"excluded": tuple(EXCLUDED_STATES) or ("__none__",)})
+        """, {"excluded": list(EXCLUDED_STATES) if EXCLUDED_STATES else ["__none__"]})
         cols = [c.name for c in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
