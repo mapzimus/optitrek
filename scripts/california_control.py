@@ -113,10 +113,10 @@ def main() -> int:
     # Render map.
     out_path = OUTPUT_DIR / "optitrek_california_double.html"
     print(f">> Rendering map → {out_path.relative_to(REPO_ROOT)}")
-    render_map(result, stop_geo, output_path=out_path, use_road_geometry=False)
-    # Note: use_road_geometry=False because OSRM is no longer running locally
-    # (we stopped it after Tier 1). Straight-line legs are fine for this
-    # comparison — the cost numbers are what we care about.
+    render_map(result, stop_geo, output_path=out_path, use_road_geometry=True)
+    # use_road_geometry=True pulls per-leg polylines from OSRM /route. Requires
+    # OSRM running at OSRM_URL (default http://localhost:5000). If OSRM is
+    # unreachable, visualize.py silently falls back to straight lines.
 
     print()
     print(">> Comparison vs Olson 2015 + original Tier 1")
