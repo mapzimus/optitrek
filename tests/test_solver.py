@@ -167,3 +167,40 @@ def test_validate_catches_duplicate_node():
     )
     problems = validate(r, required_states={"A"})
     assert any("duplicate" in p for p in problems)
+
+
+from src.config import TripConfig
+from src.solver import solve_with_config
+
+
+def test_must_include_forces_visit_of_off_route_node():
+    # 5 POIs: A, B, C in state ST1; D in ST2; E in ST3.
+    # E is geographically far from A, B, C, D. Without must_include the
+    # solver will skip E (paying state-skip penalty for ST3 only saves on
+    # avoiding the long leg). With must_include=[5], E must be in the tour.
+    pois = [
+        {"id": 1, "name": "A", "state": "ST1", "category": "x", "lat": 0.0, "lon": 0.0},
+        {"id": 2, "name": "B", "state": "ST1", "category": "x", "lat": 0.0, "lon": 1.0},
+        {"id": 3, "name": "C", "state": "ST1", "category": "x", "lat": 1.0, "lon": 0.0},
+        {"id": 4, "name": "D", "state": "ST2", "category": "x", "lat": 1.0, "lon": 1.0},
+        {"id": 5, "name": "E", "state": "ST3", "category": "x", "lat": 100.0, "lon": 100.0},
+    ]
+    n = len(pois)
+    dur = np.zeros((n, n), dtype=np.float32)
+    dist = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                d = ((pois[i]["lat"] - pois[j]["lat"]) ** 2 +
+                     (pois[i]["lon"] - pois[j]["lon"]) ** 2) ** 0.5
+                dur[i][j] = d * 3600  # 1 unit = 1 hour
+                dist[i][j] = d * 1609.344
+
+    cfg = TripConfig(name="x", states=["ST1", "ST2", "ST3"], must_include=[5],
+                     time_limit_seconds=10)
+    result = solve_with_config(cfg, pois, dur, dist)
+
+    visited_ids = {node.id for node in result.order}
+    assert 5 in visited_ids, "must_include POI 5 should be visited"
+    st3_visits = sum(1 for node in result.order if node.state == "ST3")
+    assert st3_visits == 1

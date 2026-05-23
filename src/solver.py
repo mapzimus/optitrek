@@ -259,3 +259,143 @@ def validate(result: SolveResult, required_states: set[str]) -> list[str]:
         problems.append("negative leg cost — distance matrix is corrupt")
 
     return problems
+
+
+# ---------- Tier 2 config-driven wrapper ----------
+
+def _depot_index_for_config(config, pois: list[dict]) -> int:
+    """Resolve depot index from config priority:
+      1. must_include POI in start_state
+      2. First POI in start_state (sorted by state, id — pois already sorted)
+      3. pois[0] if start_state is None
+    See spec §6.4.
+    """
+    if config.start_state is None:
+        return 0
+    if config.must_include:
+        for i, p in enumerate(pois):
+            if p["id"] in config.must_include and p["state"] == config.start_state:
+                return i
+    for i, p in enumerate(pois):
+        if p["state"] == config.start_state:
+            return i
+    raise ValueError(
+        f"start_state={config.start_state!r} has no POIs in the candidate "
+        f"set after filtering"
+    )
+
+
+def solve_with_config(
+    config,
+    pois: list[dict],
+    durations,
+    distances,
+):
+    """Solve the TSP defined by `config` over `pois` with `durations`/
+    `distances` matrices. Returns a SolveResult. See spec §6.
+
+    Tier 2 constraint support arrives incrementally:
+      - This task (Task 5): must_include via routing.ActiveVar
+      - max_stops penalty + loop=False handling are added in later tasks.
+        The function gracefully ignores those config fields until they're
+        implemented (a max_stops config will produce more stops than
+        requested; a loop=False config will include the return-to-depot
+        cost). Both are corrected before any user-facing Tier 2 trip runs.
+
+    Tier 1 callers continue to use the original solve() unchanged — this
+    wrapper is for config-driven trips only.
+    """
+    from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+
+    nodes = [Node(id=p["id"], state=p["state"]) for p in pois]
+    n = len(nodes)
+    depot_index = _depot_index_for_config(config, pois)
+
+    pois_states = {p["state"] for p in pois}
+    if config.states is not None:
+        required = set(config.states) & pois_states
+    else:
+        required = pois_states
+
+    manager = pywrapcp.RoutingIndexManager(n, 1, depot_index)
+    routing = pywrapcp.RoutingModel(manager)
+
+    cost_scale = 1000  # millisecond precision (existing solver convention)
+
+    def time_callback(from_idx, to_idx):
+        i = manager.IndexToNode(from_idx)
+        j = manager.IndexToNode(to_idx)
+        return int(durations[i][j] * cost_scale)
+
+    transit_callback_index = routing.RegisterTransitCallback(time_callback)
+    routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+
+    SKIP_PENALTY = 10**12
+    for state in required:
+        state_indices = [
+            manager.NodeToIndex(i) for i, p in enumerate(pois) if p["state"] == state
+        ]
+        if state_indices:
+            routing.AddDisjunction(state_indices, SKIP_PENALTY, 1)
+
+    for i, p in enumerate(pois):
+        if p["state"] not in required:
+            routing.AddDisjunction([manager.NodeToIndex(i)], 0, 1)
+
+    # must_include: hard constraint — these nodes MUST be visited
+    for must_id in config.must_include:
+        for i, p in enumerate(pois):
+            if p["id"] == must_id:
+                node_idx = manager.NodeToIndex(i)
+                routing.solver().Add(routing.ActiveVar(node_idx) == 1)
+                break
+
+    search_params = pywrapcp.DefaultRoutingSearchParameters()
+    search_params.first_solution_strategy = (
+        routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+    )
+    search_params.local_search_metaheuristic = (
+        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+    )
+    search_params.time_limit.seconds = int(config.time_limit_seconds)
+
+    import time
+    t0 = time.perf_counter()
+    solution = routing.SolveWithParameters(search_params)
+    runtime = time.perf_counter() - t0
+
+    if solution is None:
+        return SolveResult(
+            order=[], total_cost=float("inf"), leg_costs=[],
+            states_covered=set(), status="FAILED", runtime_seconds=runtime,
+        )
+
+    index = routing.Start(0)
+    visited_node_indices: list[int] = []
+    leg_costs: list[float] = []
+    while not routing.IsEnd(index):
+        node = manager.IndexToNode(index)
+        visited_node_indices.append(node)
+        prev_index = index
+        index = solution.Value(routing.NextVar(index))
+        if not routing.IsEnd(index):
+            arc_cost = routing.GetArcCostForVehicle(prev_index, index, 0)
+            leg_costs.append(arc_cost / cost_scale)
+
+    # Close the loop (depot → first → ... → last → depot)
+    last_node = visited_node_indices[-1]
+    return_cost = durations[last_node][depot_index]
+    leg_costs.append(float(return_cost))
+
+    order_nodes = [nodes[i] for i in visited_node_indices]
+    total_cost = sum(leg_costs)
+    states_covered = {n.state for n in order_nodes}
+
+    return SolveResult(
+        order=order_nodes,
+        total_cost=total_cost,
+        leg_costs=leg_costs,
+        states_covered=states_covered,
+        status="SUCCESS",
+        runtime_seconds=runtime,
+    )
