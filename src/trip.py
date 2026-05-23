@@ -52,9 +52,19 @@ def run_trip(
     print(f">> Matrix {durations.shape}, solving (budget {config.time_limit_seconds}s)...")
 
     result = solve_with_config(config, pois, durations, distances)
-    print(f">> {result.status}: {len(result.order)} stops, "
-          f"{result.total_cost/3600:.1f} h, "
-          f"{sum(distances[result.order[i].id][result.order[(i+1)%len(result.order)].id] for i in range(len(result.order)-1))/1609.344:,.0f} mi")
+
+    # Compute total distance in meters by translating Node.id back to the
+    # corresponding matrix row/column (positions in the `pois` list, not the
+    # DB id which Node.id stores).
+    id_to_idx = {p["id"]: i for i, p in enumerate(pois)}
+    n_stops = len(result.order)
+    total_meters = sum(
+        distances[id_to_idx[result.order[i].id]][id_to_idx[result.order[(i + 1) % n_stops].id]]
+        for i in range(n_stops - 1)
+    )
+    total_miles = total_meters / 1609.344
+    print(f">> {result.status}: {n_stops} stops, "
+          f"{result.total_cost/3600:.1f} h, {total_miles:,.0f} mi")
 
     days = split_into_days(result, config.max_hours_per_day)
     day_colors = colors_for_days(len(days))

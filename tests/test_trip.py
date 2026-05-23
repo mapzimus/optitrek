@@ -48,3 +48,21 @@ def test_run_trip_empty_pool_raises(tmp_path: Path):
             pass  # expected
         else:
             assert False, "should have raised EmptyCandidatePool"
+
+
+def test_run_trip_handles_nonsequential_poi_ids(tmp_path: Path):
+    # Real POIs have DB ids like 42, 107 — not 0..n-1. Verify run_trip
+    # correctly handles this rather than crashing in the summary stats.
+    def offset_pois():
+        # Same shape as _fake_pois but with ids offset by 100
+        return [
+            {"id": 100 + i, "name": f"P{i}", "state": f"S{i % 3}",
+             "category": "National Park", "lat": float(i), "lon": float(i)}
+            for i in range(6)
+        ]
+
+    cfg = TripConfig(name="test_ids", time_limit_seconds=5)
+    with patch("src.trip.fetch_pois", return_value=offset_pois()), \
+         patch("src.trip.build_matrix", side_effect=lambda pois: _fake_matrices(pois)):
+        out = run_trip(cfg, output_dir=tmp_path)
+    assert out.exists(), "should have written an HTML file"
