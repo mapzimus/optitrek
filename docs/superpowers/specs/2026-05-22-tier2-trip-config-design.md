@@ -189,10 +189,27 @@ tests/test_solver.py     — add tests for must_include, max_stops penalty, open
 ## 6. Constraint implementations
 
 ### 6.1 must_include
-Each must-include POI ID gets a unique pseudo-zone `MUST_<id>` in the solver's
-required_states set. Reuses the existing OR-Tools disjunction-with-penalty
-machinery. Zero new solver code; uses the pattern already proven in
-`scripts/olson_control.py`.
+
+Each must-include POI ID becomes a **hard constraint** via
+`routing.solver().Add(routing.ActiveVar(node_index) == 1)`. This is a
+different OR-Tools mechanism than the per-state disjunctions used for
+coverage: disjunctions allow skipping with a penalty, `ActiveVar` forbids
+skipping outright.
+
+The must-include POI **keeps its real state label** in the solver, so it
+also counts toward that state's disjunction (a must-include POI in
+California satisfies `CA` coverage — the solver does not need to visit a
+second California POI just to cover the state).
+
+**Why not pseudo-zones (the pattern from `olson_control.py`)?** Those
+scripts forced ALL nodes to be visited by giving each node a unique
+pseudo-state. That works when every node is required, but for `must_include`
+we want a SUBSET of nodes required while the rest remain optional. Using a
+pseudo-state `MUST_<id>` would prevent the must-include POI from
+contributing to its real state's coverage, forcing the solver to visit a
+second POI in the same state to satisfy coverage — wrong behavior.
+`ActiveVar` is the right primitive: it adds a "must visit" constraint
+without touching the state-coverage disjunctions.
 
 ### 6.2 max_stops
 
