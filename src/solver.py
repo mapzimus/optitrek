@@ -404,8 +404,12 @@ def solve_with_config(
         a = visited_node_indices[i]
         b = visited_node_indices[i + 1]
         leg_costs.append(float(durations[a][b]))
-    # Closing leg (last → depot)
-    leg_costs.append(float(durations[visited_node_indices[-1]][depot_index]))
+    # Closing leg (last → depot), but only if config.loop is True. Open
+    # paths exclude the return-to-depot leg. The OR-Tools solver itself
+    # internally still solves a cycle — we're just not charging the user
+    # for the return leg in the reported total.
+    if config.loop:
+        leg_costs.append(float(durations[visited_node_indices[-1]][depot_index]))
 
     order_nodes = [nodes[i] for i in visited_node_indices]
     total_cost = sum(leg_costs)

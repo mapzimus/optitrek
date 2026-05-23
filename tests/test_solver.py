@@ -236,3 +236,36 @@ def test_max_stops_keeps_tour_under_cap():
                      time_limit_seconds=10)
     result = solve_with_config(cfg, pois, dur, dist)
     assert len(result.order) <= 4, f"Tour has {len(result.order)} stops, max_stops=4"
+
+
+def test_loop_false_returns_shorter_total_than_loop_true():
+    # Linear chain of 4 POIs spaced 1 unit apart on a line.
+    # Loop=True: must drive 1+1+1+3 = 6 units (the last leg loops back)
+    # Loop=False: drive 1+1+1 = 3 units (no return)
+    pois = [
+        {"id": i, "name": f"P{i}", "state": f"S{i}",
+         "category": "x", "lat": 0.0, "lon": float(i)}
+        for i in range(4)
+    ]
+    n = len(pois)
+    dur = np.zeros((n, n), dtype=np.float32)
+    dist = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                d = abs(pois[i]["lon"] - pois[j]["lon"])
+                dur[i][j] = d * 3600
+                dist[i][j] = d * 1609.344
+
+    cfg_loop = TripConfig(name="x", states=["S0", "S1", "S2", "S3"],
+                          loop=True, time_limit_seconds=5)
+    res_loop = solve_with_config(cfg_loop, pois, dur, dist)
+
+    cfg_open = TripConfig(name="x", states=["S0", "S1", "S2", "S3"],
+                          loop=False, start_state="S0", time_limit_seconds=5)
+    res_open = solve_with_config(cfg_open, pois, dur, dist)
+
+    assert res_open.total_cost < res_loop.total_cost, (
+        f"Open path ({res_open.total_cost}s) should be shorter than "
+        f"loop ({res_loop.total_cost}s)"
+    )
