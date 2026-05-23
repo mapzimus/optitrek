@@ -38,6 +38,14 @@ _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 @dataclass(frozen=True)
 class TripConfig:
+    """Immutable trip configuration loaded from YAML. See spec §4.
+
+    Note: `frozen=True` prevents mutation after construction. It does NOT
+    make instances hashable, because `list` and `dict` fields fall back to
+    `__hash__ = None`. If a future task needs hashing (e.g., caching solver
+    results keyed by config), convert list/dict fields to tuple/frozenset
+    and re-evaluate YAML deserialization.
+    """
     name: str = "untitled"
     # Filters (None = no filter)
     categories: list[str] | None = None
@@ -67,11 +75,18 @@ class TripConfig:
 
 def load_config(path: Path) -> TripConfig:
     """Load a TripConfig from a YAML file. Raises yaml.YAMLError on parse
-    error, TripConfigError on validation failure."""
+    error, TripConfigError on empty/non-dict YAML or unknown fields."""
     with Path(path).open(encoding="utf-8") as f:
-        data: dict[str, Any] = yaml.safe_load(f) or {}
+        data = yaml.safe_load(f)
+    if data is None:
+        raise TripConfigError(f"YAML at {path} is empty or contains only comments")
     if not isinstance(data, dict):
         raise TripConfigError(
             f"YAML at {path} must define a mapping at the root; got {type(data).__name__}"
         )
-    return TripConfig(**data)
+    try:
+        return TripConfig(**data)
+    except TypeError as exc:
+        # TripConfig.__init__ raises TypeError for unknown kwargs (typo'd field
+        # names). Re-raise as TripConfigError so CLI runner can catch the family.
+        raise TripConfigError(f"Invalid config field in {path}: {exc}") from exc

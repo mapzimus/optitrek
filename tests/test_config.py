@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.config import TripConfig, load_config
+from src.config import TripConfig, TripConfigError, load_config
 
 
 def test_dataclass_has_expected_defaults():
@@ -48,3 +48,24 @@ time_limit_seconds: 60
     assert cfg.categories == ["National Park"]
     assert cfg.max_stops == 10
     assert cfg.time_limit_seconds == 60
+
+
+def test_load_config_rejects_empty_yaml(tmp_path: Path):
+    p = tmp_path / "empty.yaml"
+    p.write_text("")
+    with pytest.raises(TripConfigError, match="empty or contains only comments"):
+        load_config(p)
+
+
+def test_load_config_rejects_comments_only_yaml(tmp_path: Path):
+    p = tmp_path / "comments.yaml"
+    p.write_text("# just a comment\n# nothing else\n")
+    with pytest.raises(TripConfigError, match="empty or contains only comments"):
+        load_config(p)
+
+
+def test_load_config_rejects_unknown_field(tmp_path: Path):
+    p = tmp_path / "typo.yaml"
+    p.write_text("name: x\nmax_stop: 10\n")  # max_stops typo'd as max_stop
+    with pytest.raises(TripConfigError, match="max_stop"):
+        load_config(p)
