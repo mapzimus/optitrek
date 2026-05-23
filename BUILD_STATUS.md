@@ -2,6 +2,54 @@
 
 **Last updated:** 2026-05-21 ~6:20 PM Eastern — Tier 1 pipeline complete
 
+## Tier 2 Phase 1 COMPLETE (this update)
+
+- `TripConfig` dataclass + YAML loader at `src/config.py` with full
+  validation in `__post_init__` (filename safety, max_radius requires
+  start_state, loop=False requires start_state, max_stops feasibility,
+  deferred-fields warn).
+- POI fetch with filters at `src/poi_query.py` (categories, states,
+  max_radius via ST_DWithin, must_include override with warning when
+  POI is outside filter scope, typed exceptions for empty/single-stop/
+  unreachable cases).
+- Solver wrapper `solve_with_config()` at `src/solver.py` adds three
+  new constraints: must_include (ActiveVar hard), max_stops (soft
+  excess penalty + defensive post-validation), loop=False (open path).
+- Daily leg splitting + ColorBrewer color-by-day in `src/visualize.py`
+  (`split_into_days()` + `colors_for_days()` with 9- and 12-color
+  palettes for trip lengths up to ~12 days).
+- Top-level orchestrator at `src/trip.py`; CLI runner at
+  `scripts/run_trip.py` (argparse with --dry-run / --output-dir /
+  --time-limit-override / --verbose flags).
+- Two example YAMLs: `trips/tier1_replica.yaml` (oracle) and
+  `trips/southwest_parks.yaml` (demo).
+- Tier 1 replica oracle at `scripts/test_tier1_replica.py` (with
+  `scripts/run_oracle.sh` wrapper) reproduces 193.0 h / 9,744 mi within
+  ±0.5%. The oracle caught and fixed 4 real bugs in `solve_with_config`
+  during commit `5f6f674` — proof that the strict tolerance pays off.
+- Gallery map 09 (`gallery/09_southwest_parks.html`) from the config
+  layer: 5 stops · 5 states · 41.6 h · 1,431 mi.
+- Tests: `tests/test_config.py`, `tests/test_poi_query.py`,
+  `tests/test_trip.py`, `tests/test_visualize_days.py`, plus extensions
+  to `tests/test_solver.py`. Total passing tests grew from 17 to 43.
+
+### Running a Tier 2 trip
+
+```bash
+cd /e/dev/optitrek
+# Author a YAML in trips/, then:
+MSYS_NO_PATHCONV=1 wsl -d Ubuntu -u root -- bash -c \
+  "cd /mnt/e/dev/optitrek && ./scripts/run_oracle.sh"   # for tier1_replica
+# OR for any other trip, start OSRM via render_overlays.sh pattern then:
+MSYS_NO_PATHCONV=1 wsl -d Ubuntu -u root -- /root/venvs/optitrek-wsl/bin/python \
+  -m scripts.run_trip trips/southwest_parks.yaml
+```
+
+To author a new trip: copy `trips/southwest_parks.yaml`, edit the fields,
+run with `scripts/run_trip.py`.
+
+---
+
 ## Tier 1 PIPELINE COMPLETE (this update)
 
 - OSRM artifacts built on filtered (major-roads-only) US PBF, **5.2 GB** at `data/osrm-major/`

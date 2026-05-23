@@ -1,6 +1,8 @@
 # trips/southwest_parks.yaml — Tier 2 demo: 5-state parks-only loop.
-# Uses the raw NPS designation "National Park" since the DB hasn't been
-# normalized to nps_park yet (see spec §4 + DB-EXPANSION-SPEC §4.2).
+# Uses the DB's actual category value "national_park" (snake_case). The
+# DB expansion project (see 04-OPTITREK-DATABASE-EXPANSION-SPEC.md §4.2)
+# may further refine the taxonomy, but this snake_case convention is
+# already in place.
 name: southwest_parks
 states: [NM, AZ, UT, NV, CO]
 categories: ["national_park"]

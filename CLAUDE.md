@@ -167,6 +167,26 @@ is `07-OPTITREK-DECISION-LOG.md`. Known scope gaps and their resolutions are
   `data/osrm/`, `data/osrm-major/`, `data/us-latest.osm.pbf`. `data/olson/` is tracked
   (small enough; Olson's TSV is included verbatim for reproducibility of his comparison).
 
+## Tier 2 entry point (config-driven)
+
+```bash
+# CLI: python -m scripts.run_trip <yaml_path> [flags]
+MSYS_NO_PATHCONV=1 wsl -d Ubuntu -u root -- /root/venvs/optitrek-wsl/bin/python \
+  -m scripts.run_trip trips/southwest_parks.yaml
+```
+
+Useful flags:
+- `--dry-run` — print resolved depot + candidate count, no solve
+- `--time-limit-override N` — override config's time_limit_seconds
+- `--output-dir <dir>` — write the HTML somewhere other than `output/`
+
+YAML config schema documented at
+`docs/superpowers/specs/2026-05-22-tier2-trip-config-design.md` §4.
+
+Tier 1 entry point (`scripts/run_tier1.py`) is untouched and still
+works. Tier 2 reproduces it exactly via `trips/tier1_replica.yaml`
+(see `scripts/run_oracle.sh` for the OSRM lifecycle).
+
 ## Tier 1 status
 
 Pipeline runs end-to-end. Result: 49 stops covering 49 zones (48 states + DC), 193.0 h /
