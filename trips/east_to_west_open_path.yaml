@@ -1,0 +1,13 @@
+# trips/east_to_west_open_path.yaml — coast-to-coast OPEN path (no return leg).
+# Demonstrates loop=False mode: solver still internally models a cycle but
+# the final return-to-depot leg is dropped from the reported cost.
+# Visually distinct on the map: the route is an arc, not a loop.
+#
+# 11 states spanning the continental US east-to-west, mixing parks +
+# monuments to ensure enough candidates in each state for a good route.
+name: east_to_west_open_path
+states: [NY, NJ, PA, OH, IL, IA, NE, WY, UT, NV, CA]
+categories: [national_park, national_monument]
+start_state: NY
+loop: false
+time_limit_seconds: 180

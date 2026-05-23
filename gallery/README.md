@@ -145,3 +145,77 @@ pipeline working end-to-end without any hardcoded scope.
 **Result:** 5 stops · 5 states · **41.6 h · 1,431 mi** · 120s solver budget.
 
 Generated via `python -m scripts.run_trip trips/southwest_parks.yaml`.
+
+---
+
+## 10 — All National Parks (continental)
+
+[`10_all_national_parks.html`](10_all_national_parks.html)
+
+Every state that has at least one NPS-designated National Park (~27 states),
+with the solver picking the optimal park per state. Categories filtered
+to `national_park` with NO state restriction — the solver automatically
+intersects "states present in the filtered POIs" with "states the user
+wants" (no state list = all available).
+
+**Result:** 27 stops · 27 states · **228.9 h · 11,087 mi** · split into
+26 driving days at 8 h/day · 300s solver budget. The longest gallery
+trip — a real grand tour of US National Parks.
+
+Generated via `python -m scripts.run_trip trips/all_national_parks.yaml`.
+
+---
+
+## 11 — Civil War Battlefields
+
+[`11_civil_war_battlefields.html`](11_civil_war_battlefields.html)
+
+Themed tour of the NPS National Battlefield designation — mostly Civil War
+sites (Antietam, Gettysburg, Shiloh, Manassas, Vicksburg, Wilson's Creek,
+Stones River, etc.). Geographically concentrated east of the Mississippi
+in the corridor where the Civil War was actually fought.
+
+**Result:** 13 stops · 13 states · **101.0 h · 5,222 mi** · 9 driving
+days · 120s solver budget.
+
+Generated via `python -m scripts.run_trip trips/civil_war_battlefields.yaml`.
+
+---
+
+## 12 — Pacific Northwest National Parks
+
+[`12_pacific_northwest_parks.html`](12_pacific_northwest_parks.html)
+
+Companion to map 09 (Southwest parks). National Parks in the WA/OR/ID/MT/WY
+corridor: Olympic, Mt Rainier, North Cascades, Crater Lake, Glacier,
+Yellowstone, Grand Teton.
+
+**Result:** 4 stops · 4 states · **47.3 h · 1,737 mi** · 4 driving days
+· 120s solver budget. Idaho was specified in the YAML but has no
+National Park, so the `required_states` intersection cleanly dropped it
+— graceful degradation, not an error. The 4 stops are 4 states' best
+NPs in optimal order.
+
+Generated via `python -m scripts.run_trip trips/pacific_northwest_parks.yaml`.
+
+---
+
+## 13 — East-to-West Open Path
+
+[`13_east_to_west_open_path.html`](13_east_to_west_open_path.html)
+
+Demonstrates `loop=False` mode: solver still internally models a cycle
+but the return-to-depot leg is dropped from the reported cost and the
+visual. The result is an arc across the continent, not a loop. Starts
+in New York (must have `start_state` set when `loop=False`); the solver
+picks the final destination based on which path minimizes total time.
+
+11 states from NY to CA, categories filtered to `national_park` plus
+`national_monument` to ensure enough candidates in each state.
+
+**Result:** 10 stops · 10 states · **95.4 h · 5,180 mi** · 9 driving
+days · 180s solver budget. Notice the route covers nearly half the
+continent in roughly the same drive time as map 12's closed PNW loop —
+that's the geometric advantage of dropping the return leg.
+
+Generated via `python -m scripts.run_trip trips/east_to_west_open_path.yaml`.

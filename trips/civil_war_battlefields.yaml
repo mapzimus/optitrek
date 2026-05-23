@@ -1,0 +1,8 @@
+# trips/civil_war_battlefields.yaml — themed historical tour.
+# National Battlefield is mostly a Civil War designation (Antietam,
+# Gettysburg, Shiloh, Manassas, Vicksburg, etc.). 24 candidates, geographically
+# concentrated in VA/MD/PA/TN/GA/MO/AR — a natural east-of-Mississippi cluster.
+name: civil_war_battlefields
+categories: [national_battlefield]
+loop: true
+time_limit_seconds: 120

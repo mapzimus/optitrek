@@ -1,0 +1,9 @@
+# trips/pacific_northwest_parks.yaml — National Parks in the PNW + Rockies.
+# Olympic, Mt Rainier, North Cascades (WA); Crater Lake (OR); Glacier (MT);
+# Yellowstone, Grand Teton (WY). Companion to the existing southwest_parks
+# demo — same shape, different geography.
+name: pacific_northwest_parks
+states: [WA, OR, ID, MT, WY]
+categories: [national_park]
+loop: true
+time_limit_seconds: 120

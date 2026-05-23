@@ -1,0 +1,10 @@
+# trips/all_national_parks.yaml — every National Park in the contiguous US.
+# Filter to category=national_park (56 candidates) with NO state restriction.
+# Solver visits one POI per state-that-has-a-national-park (~33 stops).
+# Demonstrates the "category filter without state filter" pattern: the
+# required_states set is computed as the intersection of (config.states or
+# all-available-states) with whatever states the filtered POIs occupy.
+name: all_national_parks
+categories: [national_park]
+loop: true
+time_limit_seconds: 300
