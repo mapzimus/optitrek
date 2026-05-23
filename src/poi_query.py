@@ -13,6 +13,7 @@ from src.config import (
     TripConfigError,
     EmptyCandidatePool,
     UnreachableMustInclude,
+    SingleStopTour,
 )
 from src.db import get_conn
 
@@ -79,24 +80,25 @@ def fetch_pois(config: TripConfig) -> list[dict]:
         # didn't match the filters above.
         if config.must_include:
             seen_ids = {r["id"] for r in rows}
-            missing_ids = [i for i in config.must_include if i not in seen_ids]
-            if missing_ids:
+            missing_id_set = set(config.must_include) - seen_ids
+            if missing_id_set:
+                missing_ids = sorted(missing_id_set)  # sorted for deterministic SQL
                 cur.execute(
                     "SELECT id, name, state, category, "
                     "       ST_Y(geom) AS lat, ST_X(geom) AS lon "
-                    "FROM pois WHERE id = ANY(%s)",
-                    (missing_ids,),
+                    "FROM pois WHERE id = ANY(%(missing)s)",
+                    {"missing": missing_ids},
                 )
                 extras = [dict(zip(cols, row)) for row in cur.fetchall()]
                 found_extra_ids = {r["id"] for r in extras}
-                truly_missing = set(missing_ids) - found_extra_ids
+                truly_missing = missing_id_set - found_extra_ids
                 if truly_missing:
                     raise UnreachableMustInclude(
                         f"must_include POI IDs not found in database: "
                         f"{sorted(truly_missing)}"
                     )
                 for r in extras:
-                    if r["id"] in (set(config.must_include) - seen_ids):
+                    if r["id"] in missing_id_set:
                         warnings.warn(
                             f"must_include POI {r['id']} ({r['name']!r}, "
                             f"state={r['state']!r}) is outside the filter "
@@ -117,7 +119,6 @@ def fetch_pois(config: TripConfig) -> list[dict]:
         )
     if len(rows) < 2:
         # 1 POI = no tour possible (depot only, no destinations)
-        from src.config import SingleStopTour
         raise SingleStopTour(
             f"Only {len(rows)} POI matched the config; need at least 2 for a "
             f"tour. POI: {rows[0]['name']!r} ({rows[0]['state']}). "
