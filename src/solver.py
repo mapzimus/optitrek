@@ -344,6 +344,25 @@ def solve_with_config(
         if p["state"] not in required:
             routing.AddDisjunction([manager.NodeToIndex(i)], 0, 1)
 
+    # max_stops: soft penalty per stop beyond num_required, scaled in
+    # cost-scaled seconds. Per spec §6.2, penalty = 1 hour worth of
+    # cost-scaled units = 3600 * cost_scale. This makes adding a stop
+    # only worth it if it shortens the tour by >= 1 hour.
+    if config.max_stops is not None:
+        excess_penalty = 3600 * cost_scale  # 1 hour in scaled units
+        # For each NON-must-include, NON-required-state POI, add a
+        # disjunction with the excess penalty so the solver pays this
+        # cost per added optional stop.
+        for i, p in enumerate(pois):
+            already_constrained = (
+                p["state"] in required  # in a state disjunction already
+                or p["id"] in config.must_include  # in a hard constraint
+            )
+            if not already_constrained:
+                # Optional stop: rebuild as penalty-disjunction
+                # (overrides the earlier 0-penalty one we added for non-required)
+                routing.AddDisjunction([manager.NodeToIndex(i)], excess_penalty, 1)
+
     # must_include: hard constraint — these nodes MUST be visited
     for must_id in config.must_include:
         for i, p in enumerate(pois):
@@ -391,6 +410,16 @@ def solve_with_config(
     order_nodes = [nodes[i] for i in visited_node_indices]
     total_cost = sum(leg_costs)
     states_covered = {n.state for n in order_nodes}
+
+    if config.max_stops is not None and len(order_nodes) > config.max_stops:
+        # The penalty should keep us under the cap; this is a defensive check.
+        # If it ever fires, the penalty needs tuning upward.
+        import warnings
+        warnings.warn(
+            f"Tour has {len(order_nodes)} stops, exceeding max_stops="
+            f"{config.max_stops}. Consider raising excess_stop_penalty.",
+            UserWarning, stacklevel=2,
+        )
 
     return SolveResult(
         order=order_nodes,

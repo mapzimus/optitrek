@@ -204,3 +204,35 @@ def test_must_include_forces_visit_of_off_route_node():
     assert 5 in visited_ids, "must_include POI 5 should be visited"
     st3_visits = sum(1 for node in result.order if node.state == "ST3")
     assert st3_visits == 1
+
+
+def test_max_stops_keeps_tour_under_cap():
+    # 4 states, each with 3 POIs. With max_stops=4, solver visits exactly 4
+    # (one per state). With max_stops=8, it can add up to 4 optional extras
+    # if doing so shortens the loop.
+    pois = []
+    for state_i in range(4):
+        for poi_i in range(3):
+            pois.append({
+                "id": state_i * 10 + poi_i,
+                "name": f"S{state_i}_P{poi_i}",
+                "state": f"S{state_i}",
+                "category": "x",
+                "lat": float(state_i),
+                "lon": float(poi_i) * 0.1,
+            })
+    n = len(pois)
+    dur = np.zeros((n, n), dtype=np.float32)
+    dist = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                d = ((pois[i]["lat"] - pois[j]["lat"]) ** 2 +
+                     (pois[i]["lon"] - pois[j]["lon"]) ** 2) ** 0.5
+                dur[i][j] = d * 3600 + 600  # add small fixed cost per leg
+                dist[i][j] = d * 1609.344
+
+    cfg = TripConfig(name="x", states=["S0", "S1", "S2", "S3"], max_stops=4,
+                     time_limit_seconds=10)
+    result = solve_with_config(cfg, pois, dur, dist)
+    assert len(result.order) <= 4, f"Tour has {len(result.order)} stops, max_stops=4"
