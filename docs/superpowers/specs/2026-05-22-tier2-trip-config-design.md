@@ -115,16 +115,23 @@ YAML keys map 1:1 to dataclass fields. Defaults are omitted.
 
 ```yaml
 # trips/southwest_parks.yaml
+# Categories use the raw NPS designation strings present in the current DB.
+# Post-DB-expansion these will normalize to nps_park etc.; the YAMLs will
+# need updating then. For Phase 1, use whatever a fresh
+# SELECT DISTINCT category FROM pois WHERE source='nps'
+# returns. The values below are the known NPS designations for park-style units.
 name: southwest_parks_loop
 states: [NM, AZ, UT, NV, CO]
-categories: [nps_park]
+categories: ["National Park"]
 loop: true
 ```
 
 ```yaml
 # trips/tier1_replica.yaml — correctness oracle
 name: tier1_replica
-# all 49 zones, all NPS categories — exactly what Tier 1 ran
+# all 49 zones, no category filter — exactly what Tier 1 ran.
+# Omitting `categories` means "all NPS units," matching Tier 1's WHERE
+# clause (source='nps' with no category restriction).
 states: [AL, AR, AZ, CA, CO, CT, DC, DE, FL, GA, IA, ID, IL, IN, KS, KY,
          LA, MA, MD, ME, MI, MN, MO, MS, MT, NC, ND, NE, NH, NJ, NM, NV,
          NY, OH, OK, OR, PA, RI, SC, SD, TN, TX, UT, VA, VT, WA, WI, WV, WY]
@@ -139,14 +146,36 @@ time_limit_seconds: 300
   `num_required_states` = `len(states)` + `len(must_include)` minus any
   overlap (a must_include POI in a required state covers both).
 - `start_state` set → `start_state ∈ states` (if `states` is also set)
+- `loop=False` set → `start_state` must also be set. Open paths need an
+  unambiguous start point; defaulting to "whatever depot_index=0 happens
+  to land on" produces non-reproducible results that vary by candidate
+  filter ordering.
 - `must_include` POI IDs must exist in the database (deferred to fetch_pois)
-- `categories` entries: the values in `categories` filter match the DB's
-  `category` column verbatim. Use `SELECT DISTINCT category FROM pois
-  WHERE source='nps'` to enumerate valid values. If the DB hasn't been
-  refined per `04-OPTITREK-DATABASE-EXPANSION-SPEC.md` §4.2 yet, the
-  values will be the raw NPS designation strings (e.g., "National Park",
-  "National Monument") rather than the normalized `nps_park`/`nps_monument`
-  taxonomy. Plan resolves which form to use.
+- `categories` entries: the values must match the DB's `category` column
+  verbatim. Today the column holds raw NPS `designation` strings
+  ("National Park", "National Monument", "National Historic Site", etc.).
+  The DB expansion project (`04-OPTITREK-DATABASE-EXPANSION-SPEC.md` §4.2)
+  will later normalize these into `{nps_park, nps_monument, nps_historic,
+  nps_other}`, but the MVP uses the raw strings. Validator runs `SELECT
+  DISTINCT category FROM pois WHERE source='nps'` once on load and
+  rejects unknown values with a list of the valid options.
+- `category_priority` and `total_trip_days` are deferred fields for
+  time-budgeted mode (Tier 2 Phase 2). If a user sets either in a Phase 1
+  YAML, the loader logs a `warnings.warn` ("field accepted but ignored in
+  Phase 1; activates in time-budgeted mode") but does NOT reject the
+  config. This keeps YAMLs forward-compatible without surprising errors.
+
+### Output file location
+
+The pipeline writes to `output/<config.name>.html`. Repeat runs of the
+same config OVERWRITE the previous output — desirable for iterating on a
+trip's parameters. To preserve a snapshot, copy the file into `gallery/`
+with whatever caption-style name fits the portfolio convention (see
+`gallery/README.md`).
+
+`config.name` is therefore subject to filename-safety rules: must match
+`^[A-Za-z0-9_-]+$`. The loader rejects names containing spaces, slashes,
+or other path-unsafe characters.
 
 ---
 
@@ -184,6 +213,25 @@ tests/test_solver.py     — add tests for must_include, max_stops penalty, open
 - `tests/test_data_pull.py`, `tests/test_visualize_smoke.py` — Tier 1 tests
 - All Tier 1 scripts in `scripts/` (`build_osrm.sh`, `run_tier1_local.sh`, etc.)
 
+### Library and CLI conventions
+
+**YAML parsing:** `pyyaml` (already a common transitive dep; smallest viable
+option). NO pydantic — adds 5 MB of deps for one config object's worth of
+validation. Validation is done in `TripConfig.__post_init__` via plain
+Python `if` / `raise` — five fields, ~30 lines of validator code.
+
+**CLI for `scripts/run_trip.py`:** `argparse` with these flags:
+
+| Flag | Type | Default | Behavior |
+|------|------|---------|----------|
+| positional `yaml_path` | str | required | Path to the trip YAML |
+| `--output-dir` | str | `output/` | Override where the HTML lands |
+| `--time-limit-override` | int (seconds) | None | Override `config.time_limit_seconds` (useful for fast smoke tests vs full quality solves) |
+| `--dry-run` | flag | False | Print the post-filter candidate set + resolved depot, then exit. No matrix build, no solve, no render. |
+| `--verbose` | flag | False | Echo SQL + OSRM URLs as they run. Otherwise silent except for headline progress. |
+
+No `typer` / `click` — argparse is in the stdlib, no extra dep.
+
 ---
 
 ## 6. Constraint implementations
@@ -210,6 +258,16 @@ contributing to its real state's coverage, forcing the solver to visit a
 second POI in the same state to satisfy coverage — wrong behavior.
 `ActiveVar` is the right primitive: it adds a "must visit" constraint
 without touching the state-coverage disjunctions.
+
+**`must_include` overrides other filters.** A must-include POI is unioned
+back into the candidate set after `categories` / `states` / `max_radius`
+filtering — even if it would otherwise be excluded. Rationale: the user is
+explicitly saying "force this stop," and silently dropping it because of
+another filter would be confusing UX. The loader emits a `warnings.warn`
+when a must-include POI re-enters via override ("must_include POI {id} is
+outside the filter scope but will be visited anyway"), so the behavior is
+visible without being fatal. The override applies to all three filters
+uniformly.
 
 ### 6.2 max_stops
 
@@ -289,6 +347,31 @@ day with no split (you'd need an overnight stop midway; Tier 3 problem).
 of up to 9 days; Set3 (12 colors) for longer. Each day's polyline gets
 its color; each marker carries a "Day N" tooltip.
 
+### 6.7 Edge cases — empty / degenerate candidate sets
+
+The pipeline raises specific exceptions for malformed inputs rather than
+silently producing nonsense outputs:
+
+- **`EmptyCandidatePool`** — `fetch_pois(config)` returns zero rows. Raised
+  from `fetch_pois` before matrix building. Message must include the
+  filter values used so the user can see WHY the query was empty (e.g.,
+  "no POIs match: states=['DE'], categories=['National Park'], max_radius_miles=10
+  from start_state=DE — Delaware has no National Park-designated NPS units").
+- **`UnreachableMustInclude`** — `must_include` contains POI IDs that don't
+  exist in the DB. Raised from `fetch_pois` after the query but before
+  matrix building, with the offending IDs listed.
+- **`SingleStopTour`** — Only the depot is in the candidate set after all
+  filters apply (so the "tour" is one stop, which is silly). Raised from
+  the validator after the candidate count is known. Message suggests
+  widening filters.
+- **`InfeasibleMaxStops`** — `max_stops < num_required_states` after
+  resolving overlap with `must_include`. Raised in `TripConfig.__post_init__`
+  before any DB or solver work. Message shows the computed
+  `num_required_states` so the user knows the floor.
+
+These exceptions inherit from a common `TripConfigError` so the CLI runner
+can catch the family and print a clean message instead of a stack trace.
+
 ---
 
 ## 7. Testing plan
@@ -299,7 +382,7 @@ its color; each marker carries a "Day N" tooltip.
 | Query | `tests/test_poi_query.py` | SQL generation for each filter combo with a mocked psycopg cursor; assert WHERE clauses and parameter dict |
 | Solver | `tests/test_solver.py` (extended) | Hand-crafted 5-10 node graphs: (a) must_include forces visit of an off-route node; (b) max_stops penalty respected when many candidates per state; (c) loop=False produces shorter cost than loop=True on the same graph |
 | Pipeline | `tests/test_trip.py` | End-to-end with mocked `fetch_pois` and mocked matrix; one happy path, one config-validation failure |
-| **Oracle** | `scripts/test_tier1_replica.py` | Loads `trips/tier1_replica.yaml`, runs full pipeline against real DB + OSRM, asserts result is within 1% of 193 h / 9,744 mi |
+| **Oracle** | `scripts/test_tier1_replica.py` | Loads `trips/tier1_replica.yaml`, runs full pipeline against real DB + OSRM, asserts result is within **±0.5%** of 193 h / 9,744 mi. Tight tolerance is intentional: OR-Tools' actual run-to-run variance on this problem is <0.5% (verified by repeated runs on 2026-05-21). A larger gap means the refactor has a real bug, not solver noise. |
 
 Existing tests must continue to pass (17/17). The `pytest tests/` invocation
 should grow to roughly 25-30 passing tests after this work.
@@ -316,7 +399,8 @@ Tier 2 Phase 1 is complete when ALL of the following are true:
 
 - [ ] `src/config.py`, `src/poi_query.py`, `src/trip.py` exist and have tests
 - [ ] `scripts/run_trip.py trips/tier1_replica.yaml` reproduces the Tier 1 result
-      (within solver-randomness tolerance: ±2% on time and miles)
+      within ±0.5% on time (193.0 h ± 1.0 h) and miles (9,744 mi ± 49 mi).
+      Tight bound; see §7 for rationale.
 - [ ] `scripts/run_trip.py trips/southwest_parks.yaml` produces a valid 5-state
       parks-only loop (no states from outside [NM,AZ,UT,NV,CO]; visits all 5)
 - [ ] Existing 17 tests still pass; ~10-15 new tests added covering new modules
