@@ -1,0 +1,11 @@
+# trips/tier1_replica.yaml — correctness oracle for Tier 2 refactor.
+# Reproduces Tier 1's known result: 49 stops, 193.0 h, 9,744 mi.
+# If solve_with_config produces results outside ±0.5% of those numbers,
+# the refactor has a bug.
+name: tier1_replica
+states: [AL, AR, AZ, CA, CO, CT, DC, DE, FL, GA, IA, ID, IL, IN, KS, KY,
+         LA, MA, MD, ME, MI, MN, MO, MS, MT, NC, ND, NE, NH, NJ, NM, NV,
+         NY, OH, OK, OR, PA, RI, SC, SD, TN, TX, UT, VA, VT, WA, WI, WV, WY]
+# No category filter — matches Tier 1's "all NPS designations"
+loop: true
+time_limit_seconds: 300

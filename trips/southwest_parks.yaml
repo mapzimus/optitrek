@@ -1,0 +1,8 @@
+# trips/southwest_parks.yaml — Tier 2 demo: 5-state parks-only loop.
+# Uses the raw NPS designation "National Park" since the DB hasn't been
+# normalized to nps_park yet (see spec §4 + DB-EXPANSION-SPEC §4.2).
+name: southwest_parks
+states: [NM, AZ, UT, NV, CO]
+categories: ["National Park"]
+loop: true
+time_limit_seconds: 120
