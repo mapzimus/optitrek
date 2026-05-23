@@ -67,10 +67,62 @@ class TripConfig:
     total_trip_days: int | None = None
 
     def __post_init__(self) -> None:
-        # Phase 1: validation lives here (Phase 2 may externalize). See spec §4.
-        # Validation rules added in Task 3 — keep this method body empty here so
-        # Step 2 of THIS task passes without the rules being implemented yet.
-        pass
+        # 1. name must be filename-safe
+        if not _NAME_PATTERN.match(self.name):
+            raise TripConfigError(
+                f"config.name={self.name!r} must be filename-safe "
+                f"(match {_NAME_PATTERN.pattern})"
+            )
+
+        # 2. max_radius_miles requires start_state
+        if self.max_radius_miles is not None and self.start_state is None:
+            raise TripConfigError(
+                "max_radius_miles requires start_state to provide a center point"
+            )
+
+        # 3. loop=False requires start_state for a deterministic depot
+        if not self.loop and self.start_state is None:
+            raise TripConfigError(
+                "loop=False requires start_state to provide an unambiguous start point"
+            )
+
+        # 4. start_state must be in states if states is set
+        if (
+            self.start_state is not None
+            and self.states is not None
+            and self.start_state not in self.states
+        ):
+            raise TripConfigError(
+                f"start_state {self.start_state!r} not in states={self.states!r}"
+            )
+
+        # 5. max_stops feasibility (against state coverage; the must_include
+        #    overlap deduction is finalized once we have the DB connection in
+        #    fetch_pois — at config-load time we can only check the state floor).
+        if self.max_stops is not None and self.states is not None:
+            min_floor = len(self.states)
+            if self.max_stops < min_floor:
+                raise InfeasibleMaxStops(
+                    f"max_stops={self.max_stops} is less than the number of "
+                    f"required states ({min_floor}). Increase max_stops or "
+                    f"reduce states."
+                )
+
+        # 6. Deferred fields: warn when set
+        if self.category_priority:
+            warnings.warn(
+                "category_priority is accepted but ignored in Phase 1; "
+                "activates in time-budgeted mode (Phase 2)",
+                UserWarning,
+                stacklevel=2,
+            )
+        if self.total_trip_days is not None:
+            warnings.warn(
+                "total_trip_days is accepted but ignored in Phase 1; "
+                "activates in time-budgeted mode (Phase 2)",
+                UserWarning,
+                stacklevel=2,
+            )
 
 
 def load_config(path: Path) -> TripConfig:
