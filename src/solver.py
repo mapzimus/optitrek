@@ -324,25 +324,51 @@ def solve_with_config(
 
     cost_scale = 1000  # millisecond precision (existing solver convention)
 
+    # Pre-round the scaled cost matrix to match solve()'s behaviour exactly.
+    # solve() does: scaled = (distance_matrix * COST_SCALE).round().astype(int64)
+    # Using round() rather than truncation keeps the two cost models numerically
+    # identical, which gives GLS the same objective landscape.
+    scaled_durations = (np.asarray(durations) * cost_scale).round().astype(np.int64)
+
     def time_callback(from_idx, to_idx):
         i = manager.IndexToNode(from_idx)
         j = manager.IndexToNode(to_idx)
-        return int(durations[i][j] * cost_scale)
+        return int(scaled_durations[i, j])
 
     transit_callback_index = routing.RegisterTransitCallback(time_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-    SKIP_PENALTY = 10**12
-    for state in required:
-        state_indices = [
-            manager.NodeToIndex(i) for i, p in enumerate(pois) if p["state"] == state
-        ]
-        if state_indices:
-            routing.AddDisjunction(state_indices, SKIP_PENALTY, 1)
-
+    # Build state→node-indices map in pois list order (stable, matches solve()).
+    # Iterating a bare `required` set gives hash-ordered output which changes
+    # which disjunction PATH_CHEAPEST_ARC seeds first and can shift GLS.
+    state_to_indices: dict[str, list[int]] = {}
     for i, p in enumerate(pois):
-        if p["state"] not in required:
-            routing.AddDisjunction([manager.NodeToIndex(i)], 0, 1)
+        state_to_indices.setdefault(p["state"], []).append(i)
+
+    SKIP_PENALTY = 10**12
+    depot_state = pois[depot_index]["state"]
+    cp = routing.solver()
+    for state, node_indices in state_to_indices.items():  # stable pois-order
+        non_depot = [i for i in node_indices if i != depot_index]
+        routing_indices = [manager.NodeToIndex(i) for i in non_depot]
+        if not routing_indices:
+            continue
+        if state in required:
+            if state == depot_state:
+                # Depot already covers this state; its node cannot be placed in
+                # a disjunction (OR-Tools routing constraint — depot must be
+                # free). Make all same-state non-depot nodes individually
+                # optional (0 penalty to skip), matching solve() capped mode.
+                for ri in routing_indices:
+                    routing.AddDisjunction([ri], 0)
+            else:
+                routing.AddDisjunction(routing_indices, SKIP_PENALTY, 1)
+        else:
+            # Non-required state: soft-optional + hard CP forbid, matching
+            # solve() capped mode. Removes nodes from GLS search space entirely.
+            for ri in routing_indices:
+                routing.AddDisjunction([ri], 0)
+                cp.Add(routing.ActiveVar(ri) == 0)
 
     # max_stops: soft penalty per stop beyond num_required, scaled in
     # cost-scaled seconds. Per spec §6.2, penalty = 1 hour worth of
@@ -378,7 +404,7 @@ def solve_with_config(
     search_params.local_search_metaheuristic = (
         routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     )
-    search_params.time_limit.seconds = int(config.time_limit_seconds)
+    search_params.time_limit.FromSeconds(int(config.time_limit_seconds))
 
     import time
     t0 = time.perf_counter()
