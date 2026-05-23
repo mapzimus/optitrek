@@ -129,3 +129,19 @@ Olmsted, Lowell) → ME north (Frances Perkins → Acadia → Roosevelt
 Campobello → Saint Croix Island → Maine Acadian → Katahdin Woods) →
 home. Demonstrates that the same pipeline handles arbitrary regional
 sub-tours, not just the contiguous-US scope.
+
+---
+
+## 09 — Tier 2 demo: Southwest National Parks loop
+
+[`09_southwest_parks.html`](09_southwest_parks.html)
+
+The first Tier 2 demo: a 5-state National Parks loop generated from
+`trips/southwest_parks.yaml`. Categories filtered to `national_park` only,
+states limited to NM/AZ/UT/NV/CO. 14 candidate parks after filters;
+solver selected the optimal 5-stop sub-tour. Demonstrates the config-driven
+pipeline working end-to-end without any hardcoded scope.
+
+**Result:** 5 stops · 5 states · **41.6 h · 1,431 mi** · 120s solver budget.
+
+Generated via `python -m scripts.run_trip trips/southwest_parks.yaml`.
