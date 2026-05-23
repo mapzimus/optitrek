@@ -194,3 +194,51 @@ def stop_geos_from_poi_table(
             label=label,
         )
     return geos
+
+
+def split_into_days(
+    result, max_hours_per_day: float = 8.0
+) -> list[list[int]]:
+    """Partition the visit order into day-indexed stop lists by walking
+    leg_costs and starting a new day when adding the next leg would
+    exceed max_hours_per_day. See spec §6.6.
+
+    Returns list of lists; each inner list contains stop indices
+    (referring to positions in result.order). A single leg longer than
+    max_hours_per_day becomes its own day (no overnight splitting; that's
+    Tier 3).
+    """
+    days: list[list[int]] = [[0]]
+    today_hours = 0.0
+    for i, leg_seconds in enumerate(result.leg_costs):
+        leg_hours = leg_seconds / 3600.0
+        if today_hours + leg_hours > max_hours_per_day and days[-1]:
+            days.append([])
+            today_hours = 0.0
+        days[-1].append(i + 1)
+        today_hours += leg_hours
+    # If the final day got only the closing return-to-depot (no marker),
+    # drop the empty list — last day is the return, not a new visit.
+    if days[-1] == [len(result.order)]:
+        days.pop()
+    return days
+
+
+# ColorBrewer palettes for color-by-day rendering. Set1 has 9 distinct
+# hues; Set3 has 12 muted ones for longer trips.
+_COLOR_SET1 = [
+    "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
+    "#a65628", "#f781bf", "#999999", "#1b9e77",
+]
+_COLOR_SET3 = [
+    "#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3",
+    "#fdb462", "#b3de69", "#fccde5", "#d9d9d9", "#bc80bd",
+    "#ccebc5", "#ffed6f",
+]
+
+
+def colors_for_days(n_days: int) -> list[str]:
+    """Return n_days distinct hex colors. Uses Set1 for ≤9 days, Set3 for
+    10-12, and cycles Set3 beyond that."""
+    palette = _COLOR_SET1 if n_days <= 9 else _COLOR_SET3
+    return [palette[i % len(palette)] for i in range(n_days)]
