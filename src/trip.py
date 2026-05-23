@@ -5,6 +5,7 @@ The pipeline:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from src.config import TripConfig
@@ -15,6 +16,21 @@ from src.visualize import (
     StopGeo, colors_for_days, render_map, split_into_days,
     stop_geos_from_poi_table,
 )
+
+
+def _osrm_url_for_network(routing_network: str) -> str:
+    """Resolve the OSRM endpoint URL for a routing_network value.
+
+    Environment overrides take precedence over the conventional defaults:
+      OSRM_URL    — for routing_network='us'        (default http://127.0.0.1:5000)
+      OSRM_URL_NA — for routing_network='us_canada' (default http://127.0.0.1:5001)
+
+    The two engines run on different ports so they can coexist locally,
+    enabling side-by-side comparison maps without container churn.
+    """
+    if routing_network == "us_canada":
+        return os.environ.get("OSRM_URL_NA", "http://127.0.0.1:5001")
+    return os.environ.get("OSRM_URL", "http://127.0.0.1:5000")
 
 
 def _build_stop_geos(pois: list[dict], order_nodes) -> dict:
@@ -36,10 +52,20 @@ def run_trip(
 
     `output_dir` defaults to `output/` at the repo root. The HTML lands at
     `<output_dir>/<config.name>.html`.
+
+    `osrm_url` explicitly overrides the URL derived from
+    `config.routing_network`. When None (the common case), the URL is
+    chosen by `_osrm_url_for_network(config.routing_network)`.
     """
     output_dir = output_dir or (Path(__file__).resolve().parent.parent / "output")
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{config.name}.html"
+
+    # Explicit param > config-derived. The same URL is used for both the
+    # /table call (matrix build) and the per-leg /route calls (map render),
+    # so a single OSRM container can serve both phases.
+    effective_osrm_url = osrm_url or _osrm_url_for_network(config.routing_network)
+    print(f">> Routing engine: {config.routing_network} ({effective_osrm_url})")
 
     pois = fetch_pois(config)
     print(f">> {len(pois)} POIs after filters")
@@ -48,7 +74,7 @@ def run_trip(
         print(f">> Dry run — depot would be POI #0: {pois[0]['name']} ({pois[0]['state']})")
         return out_path  # path returned but not created
 
-    durations, distances = build_matrix(pois)
+    durations, distances = build_matrix(pois, osrm_url=effective_osrm_url)
     print(f">> Matrix {durations.shape}, solving (budget {config.time_limit_seconds}s)...")
 
     result = solve_with_config(config, pois, durations, distances)
@@ -75,7 +101,7 @@ def run_trip(
         result=result,
         stop_geo=stop_geo,
         output_path=out_path,
-        osrm_url=osrm_url,
+        osrm_url=effective_osrm_url,
         use_road_geometry=True,
     )
     print(f">> Wrote {out_path}")

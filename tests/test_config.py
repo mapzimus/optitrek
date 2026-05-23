@@ -116,3 +116,23 @@ def test_deferred_fields_warn_when_set():
         TripConfig(name="x", category_priority={"National Park": 5})
     with pytest.warns(UserWarning, match="total_trip_days.*activates in time-budgeted"):
         TripConfig(name="x", total_trip_days=14)
+
+
+def test_routing_network_default_is_us():
+    cfg = TripConfig(name="x")
+    assert cfg.routing_network == "us"
+
+
+def test_routing_network_accepts_known_values():
+    # Both known values are valid
+    assert TripConfig(name="x", routing_network="us").routing_network == "us"
+    assert TripConfig(name="x", routing_network="us_canada").routing_network == "us_canada"
+
+
+def test_routing_network_rejects_unknown():
+    with pytest.raises(TripConfigError, match="routing_network.*must be one of"):
+        TripConfig(name="x", routing_network="mexico")
+    with pytest.raises(TripConfigError, match="routing_network.*must be one of"):
+        TripConfig(name="x", routing_network="UK")
+    with pytest.raises(TripConfigError, match="routing_network.*must be one of"):
+        TripConfig(name="x", routing_network="")

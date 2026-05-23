@@ -32,7 +32,7 @@ def _fake_matrices(pois):
 def test_run_trip_happy_path(tmp_path: Path):
     cfg = TripConfig(name="test_trip", time_limit_seconds=5)
     with patch("src.trip.fetch_pois", return_value=_fake_pois()), \
-         patch("src.trip.build_matrix", side_effect=lambda pois: _fake_matrices(pois)):
+         patch("src.trip.build_matrix", side_effect=lambda pois, osrm_url=None: _fake_matrices(pois)):
         out = run_trip(cfg, output_dir=tmp_path)
     assert out.exists()
     assert out.suffix == ".html"
@@ -63,6 +63,6 @@ def test_run_trip_handles_nonsequential_poi_ids(tmp_path: Path):
 
     cfg = TripConfig(name="test_ids", time_limit_seconds=5)
     with patch("src.trip.fetch_pois", return_value=offset_pois()), \
-         patch("src.trip.build_matrix", side_effect=lambda pois: _fake_matrices(pois)):
+         patch("src.trip.build_matrix", side_effect=lambda pois, osrm_url=None: _fake_matrices(pois)):
         out = run_trip(cfg, output_dir=tmp_path)
     assert out.exists(), "should have written an HTML file"

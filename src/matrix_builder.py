@@ -93,11 +93,18 @@ def _request_table_block(
     pois: list[dict],
     sources: list[int],
     destinations: list[int] | None = None,
+    osrm_url: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Query OSRM /table for one block of (sources × destinations).
-    Returns (durations_s, distances_m) as float32 2D arrays."""
+    Returns (durations_s, distances_m) as float32 2D arrays.
+
+    `osrm_url` overrides the OSRM_URL env var when set — used by run_trip()
+    to select between the US-only (port 5000) and US+Canada (port 5001)
+    routing engines based on TripConfig.routing_network.
+    """
+    base = osrm_url or _osrm_url()
     url = (
-        f"{_osrm_url()}/table/v1/driving/{_coord_string(pois)}"
+        f"{base}/table/v1/driving/{_coord_string(pois)}"
         f"?annotations=duration,distance"
         f"&sources={';'.join(map(str, sources))}"
     )
@@ -113,20 +120,28 @@ def _request_table_block(
     return durs, dists
 
 
-def build_matrix(pois: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+def build_matrix(
+    pois: list[dict],
+    osrm_url: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Build the full N×N (duration, distance) matrices by batching /table calls.
 
     OSRM's /table endpoint accepts up to ~10,000 total coordinates per request
     but is most reliable with ~100 sources at a time against the full set of
     destinations. We submit one batch per chunk of sources, with all POIs as
     destinations every time. Result: ceil(N/batch) requests total.
+
+    `osrm_url` overrides the OSRM_URL env var when set (used by run_trip() to
+    pick between US-only and US+Canada routing engines). When None, falls
+    back to the env var via `_osrm_url()`.
     """
     n = len(pois)
     if n == 0:
         raise RuntimeError("no POIs available for matrix construction")
     batch = _batch_size()
+    effective_url = osrm_url or _osrm_url()
     print(f">> Building {n}x{n} matrix in batches of {batch} sources")
-    print(f"   OSRM: {_osrm_url()}  ({(n + batch - 1) // batch} requests expected)")
+    print(f"   OSRM: {effective_url}  ({(n + batch - 1) // batch} requests expected)")
 
     duration = np.full((n, n), np.nan, dtype=np.float32)
     distance = np.full((n, n), np.nan, dtype=np.float32)
@@ -134,7 +149,7 @@ def build_matrix(pois: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     for chunk_start in range(0, n, batch):
         chunk_end = min(chunk_start + batch, n)
         sources = list(range(chunk_start, chunk_end))
-        durs, dists = _request_table_block(pois, sources=sources)
+        durs, dists = _request_table_block(pois, sources=sources, osrm_url=effective_url)
         duration[chunk_start:chunk_end, :] = durs
         distance[chunk_start:chunk_end, :] = dists
         elapsed = time.monotonic() - t0

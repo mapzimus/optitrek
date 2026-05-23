@@ -62,6 +62,12 @@ class TripConfig:
     max_hours_per_day: float = 8.0
     # Solver
     time_limit_seconds: int = 300
+    # Routing engine selection. "us" uses the US-only OSRM (Tier 1 baseline,
+    # oracle-verified at 193 h / 9,744 mi). "us_canada" uses the combined
+    # cross-border OSRM, which fixes routes where Canadian highways are
+    # actually fastest (e.g., Detroit→Buffalo via Ontario saves ~80 mi / 2 h).
+    # Default "us" preserves Tier 1 reproducibility — opt in per-trip in YAML.
+    routing_network: str = "us"
     # ---- Deferred to Phase 2; accepted but unused ----
     category_priority: dict[str, int] = field(default_factory=dict)
     total_trip_days: int | None = None
@@ -108,7 +114,15 @@ class TripConfig:
                     f"reduce states."
                 )
 
-        # 6. Deferred fields: warn when set
+        # 6. routing_network must be a known value
+        _VALID_NETWORKS = {"us", "us_canada"}
+        if self.routing_network not in _VALID_NETWORKS:
+            raise TripConfigError(
+                f"routing_network={self.routing_network!r} must be one of "
+                f"{sorted(_VALID_NETWORKS)}"
+            )
+
+        # 7. Deferred fields: warn when set
         if self.category_priority:
             warnings.warn(
                 "category_priority is accepted but ignored in Phase 1; "
