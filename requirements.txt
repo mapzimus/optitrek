@@ -19,5 +19,8 @@ folium>=0.17
 branca>=0.7
 polyline>=2.0            # decode OSRM-encoded route polylines
 
+# Phase 5 — Tier 2 config layer
+pyyaml>=6.0              # YAML config loading
+
 # Tests
 pytest>=8.0
