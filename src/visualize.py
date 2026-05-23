@@ -224,13 +224,16 @@ def split_into_days(
     return days
 
 
-# ColorBrewer palettes for color-by-day rendering. Set1 has 9 distinct
-# hues; Set3 has 12 muted ones for longer trips.
-_COLOR_SET1 = [
+# Categorical color palettes for color-by-day rendering.
+# _COLORS_9 is ColorBrewer Set1 with two deliberate swaps:
+#   - drop #ffff33 (yellow) — hard to see on the CartoDB Positron basemap
+#   - append #1b9e77 (Dark2 teal) — keeps the count at 9 distinct hues
+# Set3 is unchanged ColorBrewer Set3 (12 muted hues for longer trips).
+_COLORS_9 = [
     "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
     "#a65628", "#f781bf", "#999999", "#1b9e77",
 ]
-_COLOR_SET3 = [
+_COLORS_12 = [
     "#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3",
     "#fdb462", "#b3de69", "#fccde5", "#d9d9d9", "#bc80bd",
     "#ccebc5", "#ffed6f",
@@ -238,7 +241,8 @@ _COLOR_SET3 = [
 
 
 def colors_for_days(n_days: int) -> list[str]:
-    """Return n_days distinct hex colors. Uses Set1 for ≤9 days, Set3 for
-    10-12, and cycles Set3 beyond that."""
-    palette = _COLOR_SET1 if n_days <= 9 else _COLOR_SET3
+    """Return n_days distinct hex colors. Uses the 9-color palette for
+    ≤9 days, the 12-color palette for 10-12, and cycles the 12-palette
+    beyond that."""
+    palette = _COLORS_9 if n_days <= 9 else _COLORS_12
     return [palette[i % len(palette)] for i in range(n_days)]
