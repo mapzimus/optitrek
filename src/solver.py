@@ -22,6 +22,8 @@ from typing import Literal
 import numpy as np
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
+from src.config import TripConfigError
+
 Mode = Literal["capped", "uncapped"]
 
 # Scale factor: OR-Tools routing solver works on integer costs. Multiplying
@@ -279,7 +281,7 @@ def _depot_index_for_config(config, pois: list[dict]) -> int:
     for i, p in enumerate(pois):
         if p["state"] == config.start_state:
             return i
-    raise ValueError(
+    raise TripConfigError(
         f"start_state={config.start_state!r} has no POIs in the candidate "
         f"set after filtering"
     )
@@ -370,22 +372,21 @@ def solve_with_config(
             states_covered=set(), status="FAILED", runtime_seconds=runtime,
         )
 
+    # Walk the solution, collecting visited node indices.
     index = routing.Start(0)
     visited_node_indices: list[int] = []
-    leg_costs: list[float] = []
     while not routing.IsEnd(index):
-        node = manager.IndexToNode(index)
-        visited_node_indices.append(node)
-        prev_index = index
+        visited_node_indices.append(manager.IndexToNode(index))
         index = solution.Value(routing.NextVar(index))
-        if not routing.IsEnd(index):
-            arc_cost = routing.GetArcCostForVehicle(prev_index, index, 0)
-            leg_costs.append(arc_cost / cost_scale)
 
-    # Close the loop (depot → first → ... → last → depot)
-    last_node = visited_node_indices[-1]
-    return_cost = durations[last_node][depot_index]
-    leg_costs.append(float(return_cost))
+    # Read leg costs directly from durations (raw precision, matching solve()).
+    leg_costs: list[float] = []
+    for i in range(len(visited_node_indices) - 1):
+        a = visited_node_indices[i]
+        b = visited_node_indices[i + 1]
+        leg_costs.append(float(durations[a][b]))
+    # Closing leg (last → depot)
+    leg_costs.append(float(durations[visited_node_indices[-1]][depot_index]))
 
     order_nodes = [nodes[i] for i in visited_node_indices]
     total_cost = sum(leg_costs)
