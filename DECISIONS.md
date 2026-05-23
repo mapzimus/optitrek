@@ -35,6 +35,37 @@ Tier 1 is "done" only when **all** of the following are true:
 
 ---
 
+## Tier 2 Extensions (added during Tier 2 build)
+
+### D5 — Cross-border routing: **dual-engine opt-in via `routing_network` field** (2026-05-23)
+**Source:** Empirical probe of D3's accuracy cost. Same Tier 1 POI set, four representative legs, side-by-side comparison.
+
+**Background.** D3 chose the US-only Geofabrik extract to prevent the solver from "leaking" routes through Canada (Olson's manual-Cleveland-waypoint problem). That was the right call for Tier 1, but it pays a measurable accuracy cost on the small number of legs where Canadian highways are genuinely faster than the US alternative.
+
+**Measured penalty** (US-only vs combined US+Canada engine, same OSRM `/route` query):
+
+| Leg | US-only | US+Canada | Saved |
+|---|---|---|---|
+| Detroit → Buffalo | 360 mi / 7.0 h | 256 mi / 5.2 h | **−104 mi / −1.78 h (−29%)** |
+| Niagara Falls → Sault Ste M | 706 mi / 13.0 h | 537 mi / 9.7 h | **−169 mi / −3.29 h (−25%)** |
+| Acadia → Campobello Is. | 109 mi / 2.8 h | 109 mi / 2.8 h | 0 (US-1 still shortest) |
+| Seattle → Glacier NP | 585 mi / 11.7 h | 585 mi / 11.7 h | 0 (I-90/US-2 beats BC Hwy 3) |
+
+Benefits are **concentrated, not diffuse**: the Great Lakes corridor (Lake Superior + Lake Huron force massive US-side detours) is the dominant case; everywhere else the US Interstate system holds up well. Proximity to the border is not the predictor — geography is.
+
+**Resolution.** Build a *second* OSRM artifact set from a Canada + US-major merged PBF (`data/osrm-major-na/`, ~6.2 GB) and run it side-by-side on port 5001 while the US-only engine continues on 5000. `TripConfig` gains a `routing_network` field (`"us"` | `"us_canada"`, default `"us"`). `src/trip.py` resolves the right URL per config. Trip authors opt in per YAML — the default stays US-only, which **preserves the Tier 1 oracle baseline (193.0 h / 9,744 mi) exactly**.
+
+D3 is *not* invalidated — it remains the Tier 1 default and the basis for the Olson comparison numbers. D5 is an opt-in extension for trips where cross-border accuracy matters (Great Lakes loops, Maine ↔ Detroit corridors, etc.).
+
+**Why dual-engine instead of one combined engine.** Three reasons:
+1. **Oracle preservation** — the Tier 1 oracle's ±0.5% tolerance only holds against the US-only matrix. Replacing the engine globally would force re-baselining and invalidate the existing oracle test.
+2. **Per-trip opt-in is declarative** — the YAML reader sees `routing_network: us_canada` and picks the right URL with zero ambiguity. No `--allow-canada` flag juggling.
+3. **Both matrices are still useful** — the US-only matrix is the "policy-compliant" baseline for the blog post and comparison work; the US+Canada matrix is the "geographically optimal" version. Keeping both available makes the trade-off visible.
+
+**Smoke test:** `scripts/smoke_test_na_engine.sh` brings both engines up and probes the four legs above. Confirmed working 2026-05-23.
+
+---
+
 ## Implementation notes (not blocking decisions, but worth recording)
 
 - **Alaska & Hawaii NPS units** will be ingested into the `pois` table for future use but **excluded from the coverage requirement and the solver candidate set** for Tier 1 (which is contiguous-US only). They are filtered out at solve time via `WHERE state NOT IN ('AK','HI')`, not deleted.

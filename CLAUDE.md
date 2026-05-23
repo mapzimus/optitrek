@@ -60,6 +60,32 @@ OSRM_THREADS=6 ./scripts/build_osrm.sh data/osrm-major/us-major.osm.pbf data/osr
 
 Filtered artifacts (~5 GB) fit BRONTOSAURUS's 24 GB WSL cap with comfortable headroom.
 
+### Optional: US+Canada artifact set (for cross-border trips, per D5)
+
+For trips where Canadian highways are actually fastest (Detroit↔Buffalo, Niagara↔Sault Ste M),
+build a *second* artifact set that includes Canadian major roads. The US-only set stays the
+default — this is opt-in per trip.
+
+```bash
+# From WSL Ubuntu:
+./scripts/build_na_osrm.sh
+# Downloads canada-latest.osm.pbf (~5 GB), filters to major roads, merges with
+# the existing us-major.osm.pbf via osmium merge, then runs extract/partition/customize
+# on the combined PBF. Output: data/osrm-major-na/ (~6.2 GB).
+```
+
+Run both engines side-by-side on different ports:
+
+| Engine | Port | Container name | Data dir |
+|---|---|---|---|
+| US-only (D3 default) | 5000 | `optitrek-osrm-major` | `data/osrm-major/` |
+| US+Canada (D5 opt-in) | 5001 | `optitrek-osrm-na` | `data/osrm-major-na/` |
+
+Verify the cross-border engine actually routes through Canada:
+```bash
+./scripts/smoke_test_na_engine.sh   # starts both, probes 4 legs, shows delta
+```
+
 ## Architecture
 
 ### Four-phase pipeline
@@ -125,6 +151,17 @@ Phase 4: SolveResult + OSRM /route ──► Folium HTML
   50-stop trip shape. Result: -9.2% time / -24.3% miles vs Olson.
 - `scripts/compare_overlays.py` — renders two Folium overlay maps comparing the four tours
   (Olson 2015, Control 1, Optitrek capped, Optitrek 2-CA).
+- `scripts/build_na_osrm.sh` — Canada PBF download → osmium tags-filter → osmium merge with
+  `us-major.osm.pbf` → `osrm-extract`/`partition`/`customize` on the combined PBF. Output
+  `data/osrm-major-na/`. One-time, ~30-60 min. Idempotent (skips finished stages).
+- `scripts/smoke_test_na_engine.sh` — starts BOTH OSRM engines side-by-side, probes 4
+  representative legs (Detroit→Buffalo, Niagara→Sault Ste M, Acadia→Campobello,
+  Seattle→Glacier) against each, prints the delta. Validates the D5 dual-engine setup.
+  Trap stops both containers on exit.
+- `scripts/render_comparison_map.py` + `scripts/run_comparison_map.sh` — renders a single
+  Folium HTML with both US-only and US+Canada routes as toggleable FeatureGroups. The
+  wrapper ensures both engines are up, activates the venv, and runs the Python renderer.
+  Engines are left running after exit for fast re-runs.
 
 ### Decisions and gaps
 
@@ -186,6 +223,54 @@ YAML config schema documented at
 Tier 1 entry point (`scripts/run_tier1.py`) is untouched and still
 works. Tier 2 reproduces it exactly via `trips/tier1_replica.yaml`
 (see `scripts/run_oracle.sh` for the OSRM lifecycle).
+
+## Cross-border routing (D5, opt-in)
+
+D3 picks US-only OSRM as the default. D5 adds an opt-in US+Canada engine for trips
+that benefit from cross-border routing (Detroit↔Buffalo via Ontario, Niagara↔Sault
+Ste M via the Trans-Canada). The default stays US-only so the Tier 1 oracle
+(193.0 h / 9,744 mi) is preserved exactly. See `DECISIONS.md` D5 for the rationale
+and the measured per-leg savings.
+
+### Per-trip opt-in via YAML
+
+```yaml
+# trips/my_trip.yaml
+name: my_great_lakes_loop
+states: [MI, OH, PA, NY, WI, MN]
+loop: true
+routing_network: us_canada    # default is "us"; this opts into the NA engine
+```
+
+`TripConfig.routing_network` is validated by `__post_init__` against the closed
+set `{"us", "us_canada"}`. `src/trip.py:_osrm_url_for_network()` maps it to the
+right URL.
+
+### URL resolution
+
+Environment overrides take precedence over defaults:
+
+| `routing_network` | Env var | Default URL | Container |
+|---|---|---|---|
+| `"us"` (default) | `OSRM_URL` | `http://127.0.0.1:5000` | `optitrek-osrm-major` |
+| `"us_canada"` | `OSRM_URL_NA` | `http://127.0.0.1:5001` | `optitrek-osrm-na` |
+
+`run_trip()` prints the resolved engine on startup and threads the URL into BOTH
+`build_matrix()` and `render_map()` — the matrix and the rendered polylines have
+to come from the same engine or the map will visually lie about the solver's
+solution.
+
+### Running a comparison
+
+```bash
+cd /mnt/e/dev/optitrek
+./scripts/run_comparison_map.sh trips/tier1_replica.yaml
+# → output/tier1_replica_comparison.html
+```
+
+Both routes are drawn as toggleable Folium FeatureGroups with distinct colors
+(US-only blue, US+Canada red). The banner shows total hours / miles / stops for
+each plus the delta saved by cross-border routing.
 
 ## Tier 1 status
 

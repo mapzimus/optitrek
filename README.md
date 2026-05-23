@@ -19,10 +19,19 @@ Locked decisions tracked in [`DECISIONS.md`](DECISIONS.md).
 
 ## Status
 
-Tier 1, Phase 1 (Data) — **complete**. Phases 2–4 code is written + tested
-but not yet run end-to-end (needs OSRM running). See
-[`HANDOVER.md`](HANDOVER.md) for current state, known caveats, and the
-next-session checklist.
+**Tier 1 is complete.** Pipeline runs end-to-end: 49 stops covering 49 zones (48
+contiguous states + DC), **193.0 h / 9,744 mi**, beating Olson 2015 by 13.8% time
+and 28.9% miles. Two interactive Folium maps in `output/`.
+
+**Tier 2 (config-driven trips)** is also complete. Trip authors describe what they
+want in YAML (`trips/*.yaml`) — filters by state, category, radius, force-include
+specific POIs, set max stops, cap drive hours per day, choose loop vs open path,
+and (per `DECISIONS.md` D5) opt into cross-border US+Canada routing for trips
+where Canadian highways are genuinely faster.
+
+See [`BUILD_STATUS.md`](BUILD_STATUS.md) for the live state of the world.
+[`HANDOVER.md`](HANDOVER.md) is the original 2026-05-18 handover, kept for
+historical context.
 
 ## Quickstart
 

@@ -1,6 +1,120 @@
 # OSRM US Build — Status Snapshot
 
-**Last updated:** 2026-05-21 ~6:20 PM Eastern — Tier 1 pipeline complete
+**Last updated:** 2026-05-23 — Tier 2 Phase 2 (cross-border routing) complete
+
+## Tier 2 Phase 2 COMPLETE — Cross-border routing (2026-05-23)
+
+Added an opt-in US+Canada routing engine alongside the existing US-only
+engine. The Tier 1 oracle (193.0 h / 9,744 mi) is unchanged because the
+default `routing_network` is still `"us"`. Trips that benefit from
+cross-border routing (Great Lakes loops, Detroit ↔ Buffalo corridors,
+Niagara ↔ Sault Ste M) can opt in per YAML.
+
+### Why we did it
+
+Probed four representative legs with the existing US-only OSRM and a
+newly-built US+Canada OSRM to quantify D3's accuracy cost:
+
+| Leg | US-only | US+Canada | Saved |
+|---|---|---|---|
+| Detroit → Buffalo | 360 mi / 7.0 h | 256 mi / 5.2 h | **−29% / −1.78 h** |
+| Niagara Falls → Sault Ste M | 706 mi / 13.0 h | 537 mi / 9.7 h | **−25% / −3.29 h** |
+| Acadia → Campobello Is. | 109 mi / 2.8 h | 109 mi / 2.8 h | 0 (US-1 wins) |
+| Seattle → Glacier NP | 585 mi / 11.7 h | 585 mi / 11.7 h | 0 (I-90/US-2 wins) |
+
+**Concentrated, not diffuse.** Only legs where geography forces a giant
+US-side detour (Lake Superior, Lake Huron) benefit materially. Border
+proximity alone doesn't predict savings — the Maine ↔ New Brunswick case
+turned out *worse* via Canada (we had assumed it would help). Decision
+recorded as **D5** in `DECISIONS.md`.
+
+### What was built
+
+| Artifact | Location | Size | Notes |
+|---|---|---|---|
+| Canada PBF (filtered to major roads) | `data/osrm-major-na/canada-major.osm.pbf` | 59 MB | osmium tags-filter |
+| Combined US+Canada PBF | `data/osrm-major-na/north-america-major.osm.pbf` | 609 MB | osmium merge |
+| OSRM artifact set (NA) | `data/osrm-major-na/north-america-major.osrm*` | ~5.6 GB | extract / partition / customize on combined PBF |
+| Build script | `scripts/build_na_osrm.sh` | — | end-to-end Canada pull + merge + OSRM build |
+| Smoke test | `scripts/smoke_test_na_engine.sh` | — | starts both engines side-by-side, probes 4 legs, prints delta |
+| Comparison renderer | `scripts/render_comparison_map.py` + `scripts/run_comparison_map.sh` | — | dual-engine overlay HTML for any trip YAML |
+
+### Code changes
+
+- **`src/config.py`** — new `routing_network` field on `TripConfig`
+  (`"us"` | `"us_canada"`, default `"us"`). `__post_init__` validates
+  against `_VALID_NETWORKS`. **Default preserves Tier 1 oracle exactly.**
+- **`src/matrix_builder.py`** — `build_matrix(pois, osrm_url=None)` and
+  `_request_table_block(..., osrm_url=None)` accept an explicit OSRM URL
+  that overrides the `OSRM_URL` env var. Used by `run_trip()` to route
+  the `/table` call to the correct engine.
+- **`src/trip.py`** — `_osrm_url_for_network(routing_network)` resolves
+  the right URL per config. Honors `OSRM_URL` (US-only, default
+  `http://127.0.0.1:5000`) and `OSRM_URL_NA` (US+Canada, default
+  `http://127.0.0.1:5001`). `run_trip()` prints the chosen engine on
+  startup and threads the URL into both `build_matrix()` and
+  `render_map()` so the matrix and the rendered polylines come from the
+  same engine.
+- **`tests/test_config.py`** — 3 new tests:
+  `test_routing_network_default_is_us`,
+  `test_routing_network_accepts_known_values`,
+  `test_routing_network_rejects_unknown`.
+- **`tests/test_trip.py`** — `build_matrix` mock updated to accept the
+  new `osrm_url=None` kwarg.
+- **Total passing tests:** 43 → 46.
+
+### How to use cross-border routing
+
+In any trip YAML:
+
+```yaml
+name: my_great_lakes_loop
+states: [MI, OH, PA, NY, WI, MN]
+categories: [national_park, national_lakeshore]
+loop: true
+routing_network: us_canada    # ← opt in; default is "us"
+```
+
+Then start BOTH engines (the wrapper script does this for you):
+
+```bash
+# From WSL Ubuntu (cd /mnt/e/dev/optitrek):
+./scripts/run_comparison_map.sh trips/tier1_replica.yaml
+# Produces output/tier1_replica_comparison.html with both routes overlaid.
+
+# For a single-engine run with the new network:
+docker run -d --name optitrek-osrm-na --rm \
+    -p 127.0.0.1:5001:5000 -v "$(pwd)/data/osrm-major-na:/data:ro" \
+    ghcr.io/project-osrm/osrm-backend:latest \
+    osrm-routed --algorithm mld /data/north-america-major.osrm
+MSYS_NO_PATHCONV=1 wsl -d Ubuntu -u root -- /root/venvs/optitrek-wsl/bin/python \
+  -m scripts.run_trip trips/my_great_lakes_loop.yaml
+```
+
+### Known follow-ups
+
+- The combined NA matrix isn't pre-cached to parquet — every trip with
+  `routing_network: us_canada` rebuilds it from scratch (~30 s per
+  466×466 matrix). If we run a lot of NA trips, cache it under
+  `data/matrix-na/`.
+- Comparison renderer reuses `_osrm_url_for_network()` but doesn't yet
+  surface it as a public API. Fine for now; refactor if a third routing
+  network ever lands.
+- **Solver time-budget gotcha for cross-border:** the Tier 1 oracle is
+  tuned to converge on the US-only matrix in 300s. The US+Canada matrix
+  has a different search landscape and OR-Tools may need 900–1200s to
+  converge to a tour that's actually ≤ US-only cost (which the math
+  requires — adding edges to a graph can never increase shortest paths,
+  so the optimal cross-border tour must be ≤ optimal US-only tour). For
+  comparison renders, use `--time-limit-override 1200` on
+  `render_comparison_map.py`. For production trips, bump
+  `time_limit_seconds: 1200` in YAMLs that opt into `routing_network:
+  us_canada`. A first attempt at 300s on the NA matrix produced 203.6 h
+  / 10,513 mi — 10.6 h *worse* than US-only — purely from solver
+  non-convergence in the larger search space, not from any matrix
+  problem.
+
+---
 
 ## Tier 2 Phase 1 COMPLETE (this update)
 
