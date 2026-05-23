@@ -64,6 +64,23 @@ D3 is *not* invalidated — it remains the Tier 1 default and the basis for the 
 
 **Smoke test:** `scripts/smoke_test_na_engine.sh` brings both engines up and probes the four legs above. Confirmed working 2026-05-23.
 
+**D5 follow-up (2026-05-23): customs time, `border_crossing_minutes`.**
+
+OSRM models the road network but is blind to US-Canada customs wait time. The smoke-test "savings" above are pure driving time. A round-trip Canada leg crosses the border twice (entering at one bridge, leaving at another), and at major crossings (Ambassador Bridge, Peace Bridge, Sault Ste M) a passenger vehicle waits 15-30 min per crossing under normal weekday traffic — so a cross-border leg costs roughly **40 minutes of customs overhead** beyond what OSRM reports.
+
+Without this, the solver picks Canada shortcuts that lose time net of customs. With it, the solver makes the correct trade-off:
+
+| Leg | OSRM raw savings | Net after 40 min penalty | Decision |
+|---|---|---|---|
+| Detroit → Buffalo | −1.78 h | −1.11 h | still wins |
+| Niagara → Sault Ste M | −3.29 h | −2.62 h | still wins big |
+| Acadia → Campobello | 0 | +0.67 h | demoted (loses) |
+| Seattle → Glacier | 0 | +0.67 h | demoted (loses) |
+
+**Implementation.** `TripConfig.border_crossing_minutes: int = 20` (configurable per-trip; clamped [0, 240]). `src/border_crossing.py:apply_border_penalty()` uses matrix differencing — for any leg where the US+Canada duration is meaningfully less than the US-only duration (60 s noise floor), it adds `2 × border_crossing_minutes × 60` seconds to that cell of the NA matrix BEFORE the solver sees it. No GIS work or border-shape data needed — the cost delta is the signal. Setting `border_crossing_minutes: 0` suppresses the penalty (useful for NEXUS travelers and diagnostic runs).
+
+The penalty only applies when `routing_network: us_canada`. The `us` engine's matrix is built once for both purposes: detection baseline and (when applicable) the solver's input.
+
 ---
 
 ## Implementation notes (not blocking decisions, but worth recording)

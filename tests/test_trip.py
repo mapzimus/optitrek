@@ -92,6 +92,57 @@ def test_run_trip_empty_pool_raises(tmp_path: Path):
             assert False, "should have raised EmptyCandidatePool"
 
 
+def test_run_trip_cross_border_builds_baseline_and_applies_penalty(tmp_path: Path):
+    """When routing_network='us_canada' and border_crossing_minutes>0, the
+    pipeline must build the US-only matrix as a detection baseline AND apply
+    the border penalty before solving. Pin both calls."""
+    cfg = TripConfig(
+        name="test_xborder",
+        routing_network="us_canada",
+        border_crossing_minutes=20,
+        time_limit_seconds=5,
+    )
+    pois = _fake_pois()
+    dur, dist = _fake_matrices(pois)
+
+    with patch("src.trip.fetch_pois", return_value=pois), \
+         patch("src.trip.build_matrix", side_effect=lambda pois, osrm_url=None:
+               (dur.copy(), dist.copy())) as mock_matrix, \
+         patch("src.trip.apply_border_penalty",
+               side_effect=lambda us, na, dist, mins, **kw: (na, dist, 0)) as mock_penalty:
+        run_trip(cfg, output_dir=tmp_path)
+
+    # build_matrix called twice (NA primary + US baseline for detection)
+    assert mock_matrix.call_count == 2
+    # Penalty helper called exactly once with the right border-minutes value
+    assert mock_penalty.call_count == 1
+    assert mock_penalty.call_args.args[3] == 20
+
+
+def test_run_trip_cross_border_skips_penalty_when_zero(tmp_path: Path):
+    """border_crossing_minutes=0 should suppress baseline build AND penalty
+    application (useful for NEXUS-equipped travelers or diagnostic runs)."""
+    cfg = TripConfig(
+        name="test_no_penalty",
+        routing_network="us_canada",
+        border_crossing_minutes=0,
+        time_limit_seconds=5,
+    )
+    pois = _fake_pois()
+    dur, dist = _fake_matrices(pois)
+
+    with patch("src.trip.fetch_pois", return_value=pois), \
+         patch("src.trip.build_matrix", side_effect=lambda pois, osrm_url=None:
+               (dur.copy(), dist.copy())) as mock_matrix, \
+         patch("src.trip.apply_border_penalty") as mock_penalty:
+        run_trip(cfg, output_dir=tmp_path)
+
+    # Single matrix build (NA only — no baseline needed because no penalty)
+    assert mock_matrix.call_count == 1
+    # Penalty helper never invoked
+    assert mock_penalty.call_count == 0
+
+
 def test_run_trip_handles_nonsequential_poi_ids(tmp_path: Path):
     # Real POIs have DB ids like 42, 107 — not 0..n-1. Verify run_trip
     # correctly handles this rather than crashing in the summary stats.

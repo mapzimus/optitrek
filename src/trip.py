@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from src.border_crossing import apply_border_penalty, summarize_border_impact
 from src.config import TripConfig
 from src.matrix_builder import build_matrix
 from src.poi_query import fetch_pois
@@ -74,7 +75,31 @@ def run_trip(
         print(f">> Dry run — depot would be POI #0: {pois[0]['name']} ({pois[0]['state']})")
         return out_path  # path returned but not created
 
+    # Matrix build. For routing_network='us_canada', we additionally build the
+    # US-only matrix as a detection baseline so apply_border_penalty() can
+    # identify which legs actually crossed the border and inject the
+    # customs/passport-check time the solver would otherwise be blind to.
+    # Without this, the solver picks Canada shortcuts that lose time net of
+    # border overhead — see DECISIONS.md D5 follow-up.
     durations, distances = build_matrix(pois, osrm_url=effective_osrm_url)
+    if config.routing_network == "us_canada" and config.border_crossing_minutes > 0:
+        baseline_url = os.environ.get("OSRM_URL", "http://127.0.0.1:5000")
+        print(f">> Building US-only baseline for border-detection ({baseline_url})...")
+        us_durations, _ = build_matrix(pois, osrm_url=baseline_url)
+        impact = summarize_border_impact(
+            us_durations, durations, config.border_crossing_minutes
+        )
+        print(f">> Border crossings detected: {impact['n_cross_border_legs']} legs")
+        print(f"   Avg raw savings:  {impact['avg_raw_savings_minutes']:+.1f} min/leg")
+        print(f"   Avg net savings:  {impact['avg_net_savings_minutes']:+.1f} min/leg "
+              f"(after {config.border_crossing_minutes} min × 2 crossings)")
+        if impact['n_flipped_by_penalty']:
+            print(f"   ⚠ {impact['n_flipped_by_penalty']} legs become net-worse via Canada — "
+                  f"solver will route around them.")
+        durations, distances, n_penalized = apply_border_penalty(
+            us_durations, durations, distances, config.border_crossing_minutes
+        )
+        print(f">> Applied border penalty to {n_penalized} matrix entries")
     print(f">> Matrix {durations.shape}, solving (budget {config.time_limit_seconds}s)...")
 
     result = solve_with_config(config, pois, durations, distances)

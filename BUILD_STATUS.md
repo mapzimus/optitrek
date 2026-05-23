@@ -100,6 +100,21 @@ MSYS_NO_PATHCONV=1 wsl -d Ubuntu -u root -- /root/venvs/optitrek-wsl/bin/python 
 - Comparison renderer reuses `_osrm_url_for_network()` but doesn't yet
   surface it as a public API. Fine for now; refactor if a third routing
   network ever lands.
+- **Border-crossing time penalty (2026-05-23, same-day follow-up to D5).**
+  OSRM is blind to customs wait time. Added `TripConfig.
+  border_crossing_minutes: int = 20` and `src/border_crossing.py:
+  apply_border_penalty()` which uses matrix-differencing (US-only vs NA)
+  to detect cross-border legs and inject `2 × border_minutes × 60` s of
+  overhead per leg BEFORE the solver runs. Threshold 60 s above the
+  US-only number — anything below is network noise from osmium merge,
+  not a real Canadian shortcut. `summarize_border_impact()` reports
+  before-vs-after delta + count of legs flipped from net-positive to
+  net-negative by the penalty. `run_trip()` now builds the US-only
+  matrix as a baseline when `routing_network='us_canada' and
+  border_crossing_minutes > 0`. Set `border_crossing_minutes: 0` to
+  suppress (NEXUS travelers, diagnostic runs). 15 new tests
+  (`tests/test_border_crossing.py` + 4 in `test_config.py` + 2
+  integration tests in `test_trip.py`).
 - **Solver time-budget gotcha for cross-border:** the Tier 1 oracle is
   tuned to converge on the US-only matrix in 300s. The US+Canada matrix
   has a different search landscape and OR-Tools may need 900–1200s to

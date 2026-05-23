@@ -35,6 +35,7 @@ import requests
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.border_crossing import apply_border_penalty, summarize_border_impact  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.matrix_builder import build_matrix  # noqa: E402
 from src.poi_query import fetch_pois  # noqa: E402
@@ -134,13 +135,32 @@ def _summary_html(
     result_na,
     miles_us: float,
     miles_na: float,
+    border_minutes: int,
+    apply_penalty: bool,
 ) -> str:
-    """Comparison banner shown in the upper-right of the map."""
+    """Comparison banner shown in the upper-right of the map.
+
+    The "Saved by cross-border" number reflects whatever's in the NA solve's
+    total_cost. When apply_penalty=True (default), it INCLUDES
+    border_minutes × 2 of customs time on every cross-border leg, so the
+    headline is realistic. When False, it's pure OSRM road-time (diagnostic
+    mode). The banner labels which it is so the reader can interpret.
+    """
     us_h = result_us.total_cost / 3600
     na_h = result_na.total_cost / 3600
     delta_h = us_h - na_h
     delta_mi = miles_us - miles_na
     pct = (delta_h / us_h * 100) if us_h else 0.0
+    if apply_penalty:
+        penalty_note = (
+            f"Includes {border_minutes} min × 2 crossings of customs time "
+            f"on every cross-border leg."
+        )
+    else:
+        penalty_note = (
+            "Diagnostic mode (--no-border-penalty) — pure OSRM road-time "
+            "only. Real trips lose ~40 min to customs per cross-border leg."
+        )
     return f"""
     <div style="position: fixed; top: 12px; right: 12px; z-index: 9999;
                 background: white; padding: 14px 18px; border-radius: 8px;
@@ -170,6 +190,7 @@ def _summary_html(
         </span>
       </div>
       <div style="color:#666; margin-top:6px; font-size:11px;">
+        {penalty_note}<br>
         Toggle layers in the upper-right to compare routes.
       </div>
     </div>
@@ -205,6 +226,16 @@ def main() -> int:
               "worse local minimum and the map will misrepresent the value of "
               "cross-border routing."),
     )
+    parser.add_argument(
+        "--no-border-penalty", action="store_true",
+        help=("Skip the border-crossing time penalty on the NA solve. By "
+              "default the renderer mirrors run_trip(): config."
+              "border_crossing_minutes (default 20 min) × 2 crossings per "
+              "cross-border leg is added to the NA matrix BEFORE solving so "
+              "the headline 'saved' number reflects realistic customs time. "
+              "Use this flag for diagnostic 'pure OSRM' comparisons where "
+              "you want to see the raw routing-only savings."),
+    )
     args = parser.parse_args()
     config_path = Path(args.config_path)
     cfg = load_config(config_path)
@@ -235,6 +266,27 @@ def main() -> int:
 
     print(">> Building US+Canada matrix...")
     dur_na, dist_na = build_matrix(pois, osrm_url=na_url)
+
+    # Apply the border-crossing penalty (unless explicitly suppressed). We
+    # use the US-only matrix as the detection baseline — any leg where NA
+    # is meaningfully shorter must have crossed the border, so it absorbs
+    # 2 × border_crossing_minutes of customs time. Without this the headline
+    # "X hours saved by cross-border" overstates real-world value.
+    if not args.no_border_penalty and cfg.border_crossing_minutes > 0:
+        impact = summarize_border_impact(dur_us, dur_na, cfg.border_crossing_minutes)
+        print(f">> Border crossings detected: {impact['n_cross_border_legs']} legs "
+              f"(avg {impact['avg_raw_savings_minutes']:+.1f} min raw → "
+              f"{impact['avg_net_savings_minutes']:+.1f} min after "
+              f"{cfg.border_crossing_minutes}×2 min penalty)")
+        if impact['n_flipped_by_penalty']:
+            print(f"   ⚠ {impact['n_flipped_by_penalty']} legs net-worse via Canada "
+                  f"once penalty applied — solver will avoid them")
+        dur_na, dist_na, _ = apply_border_penalty(
+            dur_us, dur_na, dist_na, cfg.border_crossing_minutes
+        )
+    elif args.no_border_penalty:
+        print(">> Skipping border-crossing penalty (--no-border-penalty)")
+
     print(">> Solving US+Canada...")
     result_na = solve_with_config(cfg_na, pois, dur_na, dist_na)
     miles_na = _total_miles(result_na, pois, dist_na)
@@ -275,7 +327,11 @@ def main() -> int:
     folium.LayerControl(collapsed=False, position="topleft").add_to(m)
 
     m.get_root().html.add_child(folium.Element(
-        _summary_html(cfg.name, result_us, result_na, miles_us, miles_na)
+        _summary_html(
+            cfg.name, result_us, result_na, miles_us, miles_na,
+            border_minutes=cfg.border_crossing_minutes,
+            apply_penalty=(not args.no_border_penalty and cfg.border_crossing_minutes > 0),
+        )
     ))
 
     out_path = REPO_ROOT / "output" / f"{cfg.name}_comparison.html"

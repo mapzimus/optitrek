@@ -68,6 +68,17 @@ class TripConfig:
     # actually fastest (e.g., Detroit→Buffalo via Ontario saves ~80 mi / 2 h).
     # Default "us" preserves Tier 1 reproducibility — opt in per-trip in YAML.
     routing_network: str = "us"
+    # Wall-clock minutes added per US-Canada border crossing — OSRM models the
+    # road network but is blind to customs/passport-check time. A round-trip
+    # leg through Canada (e.g., Detroit→Buffalo via Ontario) crosses 2× so the
+    # solver sees 2 × border_crossing_minutes added to that leg's duration.
+    # Only applied when routing_network='us_canada'; ignored otherwise.
+    # 20 minutes per crossing (40 min per leg) matches CBP/CBSA published
+    # averages at major crossings (Ambassador Bridge, Peace Bridge, Sault Ste M)
+    # under normal weekday traffic. Bump to 30+ for summer/holiday trips, or
+    # set to 0 to suppress the penalty entirely (useful for diagnostic runs
+    # or for travelers with NEXUS who clear in under 5 min).
+    border_crossing_minutes: int = 20
     # ---- Deferred to Phase 2; accepted but unused ----
     category_priority: dict[str, int] = field(default_factory=dict)
     total_trip_days: int | None = None
@@ -120,6 +131,15 @@ class TripConfig:
             raise TripConfigError(
                 f"routing_network={self.routing_network!r} must be one of "
                 f"{sorted(_VALID_NETWORKS)}"
+            )
+
+        # 6b. border_crossing_minutes must be non-negative. Bound at 240
+        #     (4 hours) — beyond that and a sane traveler reroutes through
+        #     the US anyway, so the value is almost certainly a typo.
+        if not (0 <= self.border_crossing_minutes <= 240):
+            raise TripConfigError(
+                f"border_crossing_minutes={self.border_crossing_minutes} "
+                f"must be in [0, 240]; got an absurd value"
             )
 
         # 7. Deferred fields: warn when set

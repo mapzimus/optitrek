@@ -136,3 +136,33 @@ def test_routing_network_rejects_unknown():
         TripConfig(name="x", routing_network="UK")
     with pytest.raises(TripConfigError, match="routing_network.*must be one of"):
         TripConfig(name="x", routing_network="")
+
+
+# ---------- border_crossing_minutes ----------
+
+
+def test_border_crossing_default_is_20():
+    # Rationale: matches the CBP/CBSA "normal weekday" average. Anyone
+    # changing this default should expect Tier 1-style trips to shift.
+    cfg = TripConfig(name="x")
+    assert cfg.border_crossing_minutes == 20
+
+
+def test_border_crossing_accepts_zero():
+    # Zero disables the penalty — useful for NEXUS travelers or diagnostic
+    # runs that want to see the raw OSRM savings without overhead.
+    cfg = TripConfig(name="x", border_crossing_minutes=0)
+    assert cfg.border_crossing_minutes == 0
+
+
+def test_border_crossing_rejects_negative():
+    with pytest.raises(TripConfigError, match=r"border_crossing_minutes.*\[0, 240\]"):
+        TripConfig(name="x", border_crossing_minutes=-1)
+
+
+def test_border_crossing_rejects_absurd_high():
+    # Anything beyond 4 hours is almost certainly a typo (or the user is
+    # crossing on a US presidential inauguration day, in which case they
+    # should reroute through the US anyway).
+    with pytest.raises(TripConfigError, match=r"border_crossing_minutes.*\[0, 240\]"):
+        TripConfig(name="x", border_crossing_minutes=500)

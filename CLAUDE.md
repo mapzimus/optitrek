@@ -239,12 +239,29 @@ and the measured per-leg savings.
 name: my_great_lakes_loop
 states: [MI, OH, PA, NY, WI, MN]
 loop: true
-routing_network: us_canada    # default is "us"; this opts into the NA engine
+routing_network: us_canada       # default is "us"; this opts into the NA engine
+border_crossing_minutes: 20      # default 20 min × 2 crossings = 40 min/leg overhead
+                                  # set to 0 for NEXUS travelers or diagnostic runs
+                                  # bump to 30+ for summer/holiday-weekend trips
 ```
 
 `TripConfig.routing_network` is validated by `__post_init__` against the closed
 set `{"us", "us_canada"}`. `src/trip.py:_osrm_url_for_network()` maps it to the
 right URL.
+
+### Border-crossing time (D5 follow-up)
+
+OSRM doesn't model customs wait time, but every cross-border leg incurs ~20-30
+min per crossing × 2 crossings per round-trip leg. `src/border_crossing.py:
+apply_border_penalty()` uses matrix-differencing (US-only vs NA) to detect
+cross-border legs and inject `2 × border_crossing_minutes` of overhead BEFORE
+the solver runs — so the solver only picks Canada shortcuts where the routing
+savings genuinely exceed the customs overhead. Without this, modest cross-
+border legs (e.g., Acadia → Campobello) get falsely promoted.
+
+When `routing_network='us_canada' and border_crossing_minutes > 0`, `run_trip()`
+builds BOTH matrices (NA for solving, US for cross-border detection). Cost:
+~30s extra matrix-build time per trip. Worth it for correctness.
 
 ### URL resolution
 
