@@ -1,0 +1,25 @@
+# trips/great_lakes_loop.yaml — the showcase trip for D5 cross-border routing.
+#
+# Covers all 8 US states bordering the Great Lakes. Picked specifically because
+# this is the *only* corner of the country where Canadian routing yields large,
+# concentrated savings:
+#
+#   - Detroit (MI) → Buffalo (NY) via Ontario:    -29% / -1.78 h
+#   - Niagara Falls (NY) → Sault Ste M (MI) via Trans-Canada: -25% / -3.29 h
+#
+# Default routing_network "us" produces a tour that forces giant detours
+# around Lake Erie + Lake Huron. With routing_network "us_canada" the solver
+# can route Detroit↔Buffalo through Windsor/London/Hamilton, and the UP-bound
+# legs use the Trans-Canada Highway. The comparison map at
+# output/great_lakes_loop_comparison.html shows the visual divergence.
+#
+# Solver budget bumped to 600s — small problem (8 states → ~8 stops) means
+# even the NA matrix converges fast. Override with --time-limit-override at
+# the comparison script if you want headroom.
+name: great_lakes_loop
+states: [MI, OH, PA, NY, WI, MN, IL, IN]
+loop: true
+time_limit_seconds: 600
+# Default routing_network is "us". The comparison renderer creates one
+# config copy for each engine via dataclasses.replace, so this trip can
+# be rendered against both without editing the YAML.

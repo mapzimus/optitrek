@@ -1,10 +1,52 @@
 """End-to-end orchestrator tests with mocked fetch_pois + matrix build."""
+import os
 from pathlib import Path
 from unittest.mock import patch
 import numpy as np
+import pytest
 
 from src.config import TripConfig, EmptyCandidatePool
-from src.trip import run_trip
+from src.trip import run_trip, _osrm_url_for_network
+
+
+# ---------------------------------------------------------------------------
+# _osrm_url_for_network — pure-logic helper used by run_trip() to pick which
+# OSRM engine to hit based on TripConfig.routing_network. The matrix-builder
+# and the polyline-fetcher MUST receive the same URL or the rendered map will
+# misrepresent the solver's solution, so it's worth pinning this contract.
+# ---------------------------------------------------------------------------
+
+def test_osrm_url_for_network_us_default():
+    # No env var set → falls back to 127.0.0.1:5000
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("OSRM_URL", None)
+        assert _osrm_url_for_network("us") == "http://127.0.0.1:5000"
+
+
+def test_osrm_url_for_network_us_canada_default():
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("OSRM_URL_NA", None)
+        assert _osrm_url_for_network("us_canada") == "http://127.0.0.1:5001"
+
+
+def test_osrm_url_env_var_override_us():
+    with patch.dict(os.environ, {"OSRM_URL": "http://elsewhere:5000"}):
+        assert _osrm_url_for_network("us") == "http://elsewhere:5000"
+
+
+def test_osrm_url_env_var_override_us_canada():
+    with patch.dict(os.environ, {"OSRM_URL_NA": "http://elsewhere:5001"}):
+        assert _osrm_url_for_network("us_canada") == "http://elsewhere:5001"
+
+
+def test_osrm_url_unknown_network_falls_back_to_us():
+    # Defensive: any future routing_network value the dispatcher doesn't know
+    # about should land on the US-only engine (the safe default). The
+    # TripConfig validator should have rejected it before we got here, but
+    # we don't want the function to crash if a caller bypasses validation.
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("OSRM_URL", None)
+        assert _osrm_url_for_network("mexico") == "http://127.0.0.1:5000"
 
 
 def _fake_pois():
