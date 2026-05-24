@@ -32,12 +32,39 @@ ensure_engine() {
         return 0
     fi
     log "Starting $name on :$port (data: $data_dir, osrm: $osrm_file)"
-    docker rm -f "$name" >/dev/null 2>&1 || true
+    # F7 fix: previously `docker rm -f "$name" 2>&1 || true` swallowed every
+    # error — including daemon-down and permission-denied. Distinguish
+    # "container doesn't exist" (genuinely OK) from "rm failed" (real
+    # problem). Only attempt the rm if the container actually exists.
+    if docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
+        if ! docker rm -f "$name" >/dev/null; then
+            log "ERROR: failed to remove existing container '$name'."
+            log "  Likely cause: docker daemon issue or permission problem."
+            log "  Inspect: docker ps -a --filter name=$name; docker info"
+            exit 1
+        fi
+    fi
     docker run -d --name "$name" --rm \
         -p "127.0.0.1:${port}:5000" \
         -v "${REPO_ROOT}/${data_dir}:/data:ro" \
         "${OSRM_IMAGE}" \
         osrm-routed --algorithm mld --max-table-size 8000 "/data/${osrm_file}" >/dev/null
+}
+
+# F6 fix: when wait_for_engines times out, dump the tail of each
+# unhealthy container's logs so the user can immediately see what went
+# wrong (OOM, missing artifact, port collision, etc.) instead of
+# manually running `docker logs` after the fact.
+_dump_logs_for_unhealthy() {
+    local us_code="$1" na_code="$2"
+    if [ "$us_code" != "200" ]; then
+        log "--- optitrek-osrm-major logs (last 20 lines) ---"
+        docker logs --tail 20 optitrek-osrm-major 2>&1 | sed 's/^/  /' || true
+    fi
+    if [ "$na_code" != "200" ]; then
+        log "--- optitrek-osrm-na logs (last 20 lines) ---"
+        docker logs --tail 20 optitrek-osrm-na 2>&1 | sed 's/^/  /' || true
+    fi
 }
 
 wait_for_engines() {
@@ -52,7 +79,11 @@ wait_for_engines() {
             log "Both ready at t+$((i*5))s"
             return 0
         fi
-        if [ "$i" = "48" ]; then log "TIMEOUT (us=$us_code na=$na_code)"; exit 1; fi
+        if [ "$i" = "48" ]; then
+            log "TIMEOUT (us=$us_code na=$na_code)"
+            _dump_logs_for_unhealthy "$us_code" "$na_code"
+            exit 1
+        fi
         sleep 5
     done
 }

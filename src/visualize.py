@@ -48,12 +48,21 @@ class StopGeo:
     label: str           # what shows in the marker popup (name, designation)
 
 
+# F4 fix: silent polyline fallbacks make the comparison map LIE — a
+# fallback straight-line is visually indistinguishable from a real OSRM
+# response on the rendered HTML. Track each failure so render_map can
+# print a summary at the end. Module-level state is acceptable here
+# because render_map's lifecycle is bounded (one call, one map).
+_POLYLINE_FALLBACKS: list[tuple[str, str, str]] = []
+
+
 def _osrm_route_polyline(
     a: StopGeo, b: StopGeo, osrm_url: str, timeout: int = 30
 ) -> list[tuple[float, float]]:
     """Fetch the real road polyline between two stops from OSRM. Returns
     a list of (lat, lon). Falls back to a straight line if OSRM is
-    unreachable so the map still renders."""
+    unreachable so the map still renders — but appends to
+    `_POLYLINE_FALLBACKS` so the user sees a count at the end."""
     url = (
         f"{osrm_url.rstrip('/')}/route/v1/driving/"
         f"{a.lon:.6f},{a.lat:.6f};{b.lon:.6f},{b.lat:.6f}"
@@ -64,11 +73,15 @@ def _osrm_route_polyline(
         resp.raise_for_status()
         blob = resp.json()
         if blob.get("code") != "Ok" or not blob.get("routes"):
+            _POLYLINE_FALLBACKS.append(
+                (a.label, b.label, f"OSRM returned code={blob.get('code')!r}")
+            )
             return [(a.lat, a.lon), (b.lat, b.lon)]
         encoded = blob["routes"][0]["geometry"]
         # OSRM polyline default precision is 5 (matches polyline lib default).
         return polyline_lib.decode(encoded)
-    except (requests.RequestException, ValueError):
+    except (requests.RequestException, ValueError) as exc:
+        _POLYLINE_FALLBACKS.append((a.label, b.label, type(exc).__name__))
         return [(a.lat, a.lon), (b.lat, b.lon)]
 
 
@@ -112,6 +125,11 @@ def render_map(
         raise ValueError("SolveResult has no route to render")
 
     osrm_url = osrm_url or os.environ.get("OSRM_URL", DEFAULT_OSRM_URL)
+
+    # F4 fix: reset the failure counter for this render. Each call to
+    # render_map() owns its own counting window — if the caller renders
+    # multiple maps in one process they each get their own summary.
+    _POLYLINE_FALLBACKS.clear()
 
     m = folium.Map(
         location=INITIAL_CENTER,
@@ -167,6 +185,19 @@ def render_map(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     m.save(str(output_path))
+
+    # F4 fix: surface silent polyline fallbacks. Without this, the
+    # rendered map quietly substitutes straight lines for failed OSRM
+    # calls and the user has no idea their geometry is partly fake.
+    if _POLYLINE_FALLBACKS:
+        n_fail = len(_POLYLINE_FALLBACKS)
+        print(f"!! {n_fail} of {len(geos)} legs fell back to straight lines "
+              f"(OSRM unreachable or returned non-Ok):")
+        for src, dst, err in _POLYLINE_FALLBACKS[:5]:
+            print(f"   {src} → {dst}: {err}")
+        if n_fail > 5:
+            print(f"   (+ {n_fail - 5} more)")
+
     return output_path
 
 

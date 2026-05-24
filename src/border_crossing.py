@@ -78,15 +78,27 @@ def apply_border_penalty(
             f"na_durations {na_durations.shape}"
         )
 
+    # F2 fix: always copy both arrays before returning. Previously
+    # na_durations was copied (because we mutate it) but na_distances was
+    # returned by reference, creating an aliasing trap — a future
+    # downstream caller that mutated the returned distance matrix would
+    # silently corrupt the caller's input. The 60-microsecond cost on a
+    # 438x438 float32 matrix is negligible compared to matrix build time.
     if border_crossing_minutes == 0:
-        return na_durations.copy(), na_distances, 0
+        return na_durations.copy(), na_distances.copy(), 0
 
-    # NaN-safe comparison: treat NaN cells as "not a cross-border route". We
-    # don't want to add a penalty to an unreachable leg, since the cell is
-    # going to be a huge negative int64 after the solver's cast either way.
-    us_finite = np.where(np.isnan(us_durations), np.inf, us_durations)
-    na_finite = np.where(np.isnan(na_durations), np.inf, na_durations)
-    crosses_border = na_finite < (us_finite - NOISE_THRESHOLD_SECONDS)
+    # F3 fix: cross-border detection only on cells where BOTH matrices have
+    # finite durations. Previously we used np.inf as a NaN replacement,
+    # which made any NaN row in us_durations trivially "cross-border" for
+    # every reachable NA destination — a single US-side OSRM glitch would
+    # blanket-penalize ~one row of legs. The new logic skips cells where
+    # either side is unreachable, matching the conservative intent:
+    # "penalize only when we can clearly observe Canada being faster."
+    both_finite = ~(np.isnan(us_durations) | np.isnan(na_durations))
+    crosses_border = np.zeros_like(us_durations, dtype=bool)
+    crosses_border[both_finite] = (
+        na_durations[both_finite] < (us_durations[both_finite] - NOISE_THRESHOLD_SECONDS)
+    )
     np.fill_diagonal(crosses_border, False)  # i==j is never a border crossing
 
     penalty_seconds = crossings_per_leg * border_crossing_minutes * 60
@@ -94,7 +106,7 @@ def apply_border_penalty(
     adjusted[crosses_border] += penalty_seconds
 
     n_legs_penalized = int(crosses_border.sum())
-    return adjusted, na_distances, n_legs_penalized
+    return adjusted, na_distances.copy(), n_legs_penalized
 
 
 def summarize_border_impact(
@@ -113,9 +125,15 @@ def summarize_border_impact(
         n_flipped_by_penalty:       legs that were cheaper via Canada raw but
                                     become more expensive once penalty applied
     """
-    us_finite = np.where(np.isnan(us_durations), np.inf, us_durations)
-    na_finite = np.where(np.isnan(na_durations), np.inf, na_durations)
-    raw_delta = us_finite - na_finite  # positive where Canada is faster
+    # F3 fix: same as apply_border_penalty — only consider cells where
+    # both engines reported finite durations. Otherwise a single NaN row
+    # in us_durations would flag every reachable NA destination as
+    # cross-border and inflate the impact report.
+    both_finite = ~(np.isnan(us_durations) | np.isnan(na_durations))
+    raw_delta = np.zeros_like(us_durations)
+    raw_delta[both_finite] = (
+        us_durations[both_finite] - na_durations[both_finite]
+    )
     crosses_border = raw_delta > NOISE_THRESHOLD_SECONDS
     np.fill_diagonal(crosses_border, False)
 

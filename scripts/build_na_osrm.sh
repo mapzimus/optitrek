@@ -45,11 +45,32 @@ fi
 log "US-major source ready: $(du -h "${US_PBF}" | cut -f1)"
 
 # ---- 2. Download Canada PBF ----
+# F10 fix: validate that the on-disk PBF is plausibly the right thing.
+# Without this, a corrupt or HTML-error-page download would silently pass
+# the file-existence check and then fail 5+ minutes later inside
+# osrm-extract with a cryptic error. Canada PBF is ~3-5 GB; anything
+# under 500 MB is almost certainly a download failure.
+CA_PBF_MIN_BYTES=$((500 * 1024 * 1024))  # 500 MB
+_validate_pbf_size() {
+    local path="$1"
+    local actual_bytes
+    actual_bytes=$(stat -c %s "$path" 2>/dev/null || stat -f %z "$path")
+    if [[ "$actual_bytes" -lt "${CA_PBF_MIN_BYTES}" ]]; then
+        log "ERROR: ${path} is only $(du -h "$path" | cut -f1) — expected >= 500 MB."
+        log "  Likely a partial or failed download. Removing and re-trying:"
+        log "    rm '${path}' && rerun this script"
+        log "  Or check the URL is still valid: ${PBF_URL}"
+        exit 1
+    fi
+}
+
 if [[ -f "${CA_PBF_RAW}" ]]; then
     log "Canada raw PBF already present: $(du -h "${CA_PBF_RAW}" | cut -f1)"
+    _validate_pbf_size "${CA_PBF_RAW}"
 else
     log "Downloading ${PBF_URL} (~5 GB; takes ~5-15 min depending on connection)"
     curl -L -C - -o "${CA_PBF_RAW}" "${PBF_URL}"
+    _validate_pbf_size "${CA_PBF_RAW}"
 fi
 
 # ---- 3. Filter Canada to major roads ----

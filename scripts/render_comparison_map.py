@@ -50,11 +50,18 @@ ROUTE_WEIGHT = 4
 ROUTE_OPACITY = 0.75
 
 
+# F4 fix: silent polyline fallbacks defeat the whole purpose of the
+# comparison map (visual proof of routing differences). Track every
+# fallback so main() can print a summary at the end.
+_POLYLINE_FALLBACKS: list[tuple[str, str, str, str]] = []  # (engine, src, dst, err)
+
+
 def _fetch_polyline(
     a: StopGeo, b: StopGeo, osrm_url: str, timeout: int = 15
 ) -> list[tuple[float, float]]:
     """Pull the real road geometry from OSRM for one leg. Falls back to a
-    straight line if the engine is unreachable (so the map still renders).
+    straight line if the engine is unreachable (so the map still renders),
+    but records the failure in `_POLYLINE_FALLBACKS` so main() can warn.
 
     IMPORTANT: each route must fetch its geometry from the engine that
     produced its matrix. Otherwise the US+Canada route's Niagara→Sault leg
@@ -72,8 +79,13 @@ def _fetch_polyline(
         blob = resp.json()
         if blob.get("code") == "Ok" and blob.get("routes"):
             return polyline_lib.decode(blob["routes"][0]["geometry"])
-    except (requests.RequestException, ValueError):
-        pass
+        _POLYLINE_FALLBACKS.append(
+            (osrm_url, a.label, b.label, f"code={blob.get('code')!r}")
+        )
+    except (requests.RequestException, ValueError) as exc:
+        _POLYLINE_FALLBACKS.append(
+            (osrm_url, a.label, b.label, type(exc).__name__)
+        )
     return [(a.lat, a.lon), (b.lat, b.lon)]
 
 
@@ -338,6 +350,24 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     m.save(str(out_path))
     print(f">> Wrote {out_path}")
+
+    # F4 fix: surface silent polyline fallbacks. The comparison map's
+    # whole value proposition is visual fidelity; if 30 of 49 legs fell
+    # back to straight lines the user needs to know before sharing the
+    # map. Group by engine because failures often cluster (one container
+    # down → all of its polylines fall back).
+    if _POLYLINE_FALLBACKS:
+        from collections import Counter
+        by_engine: Counter = Counter(eng for eng, _, _, _ in _POLYLINE_FALLBACKS)
+        n_total = len(_POLYLINE_FALLBACKS)
+        print(f"!! {n_total} polyline calls fell back to straight lines:")
+        for engine, count in by_engine.most_common():
+            print(f"   {engine}: {count}")
+        # Show first few specific failures for diagnostic
+        for eng, src, dst, err in _POLYLINE_FALLBACKS[:3]:
+            print(f"   e.g. {src} → {dst} on {eng}: {err}")
+        if n_total > 3:
+            print(f"   (+ {n_total - 3} more — see source for full list)")
     return 0
 
 

@@ -399,11 +399,31 @@ def solve_with_config(
                 routing.AddDisjunction([manager.NodeToIndex(i)], excess_penalty, 1)
 
     # must_include: hard constraint — these nodes MUST be visited
+    #
+    # F8 fix: when a must_include POI is in a state that's also in
+    # `required`, the state disjunction (max_cardinality=1) silently
+    # excludes every OTHER POI in that state. The forced POI becomes
+    # THE representative for that state. This is correct behavior but
+    # invisible — print a diagnostic so the user understands why their
+    # preferred-looking alternative POI in the same state didn't show
+    # up in the tour.
     for must_id in config.must_include:
         for i, p in enumerate(pois):
             if p["id"] == must_id:
                 node_idx = manager.NodeToIndex(i)
                 routing.solver().Add(routing.ActiveVar(node_idx) == 1)
+                if p["state"] in required:
+                    other_in_state = [
+                        q for q in pois
+                        if q["state"] == p["state"] and q["id"] != must_id
+                    ]
+                    if other_in_state:
+                        print(
+                            f">> must_include[{must_id}] ({p['name']!r}) forces "
+                            f"it as the {p['state']} representative; "
+                            f"{len(other_in_state)} other {p['state']} POI(s) "
+                            f"cannot be selected for this trip."
+                        )
                 break
 
     search_params = pywrapcp.DefaultRoutingSearchParameters()

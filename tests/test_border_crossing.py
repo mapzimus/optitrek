@@ -65,18 +65,26 @@ def test_diagonal_never_penalized():
 
 
 def test_nan_in_us_does_not_create_false_border():
-    # If the US leg is unreachable (NaN) but NA reaches it, that's the
-    # opposite of cross-border (NA simply found a path the US-only network
-    # couldn't). Avoid double-counting as a customs-check.
+    """F3 regression: when the US-only matrix has NaN cells (US-side OSRM
+    glitch, an unreachable POI pair, or a transient timeout during matrix
+    build), the OLD logic treated NaN as +inf and flagged every NA leg
+    out of that cell as 'Canada wins,' silently penalizing entire rows.
+    The NEW conservative logic treats NaN as 'no opinion': cross-border
+    is only flagged when BOTH engines reported finite durations AND NA
+    is meaningfully less. So a glitchy US row produces zero spurious
+    cross-border penalties.
+
+    The previous behavior was defended as 'an NA-only path is probably
+    cross-border' — but in practice the NaN cases we see come from
+    OSRM glitches, not legit unreachables. Erring conservative is safer:
+    a missed real cross-border leg costs ~40 min in the worst case; a
+    false-positive cross-border row corrupts the whole solver objective."""
     us = np.array([[0.0, np.nan], [np.nan, 0.0]], dtype=np.float32)
     na = np.array([[0.0, 100.0], [100.0, 0.0]], dtype=np.float32)
     dist = np.zeros_like(us)
     _, _, n = apply_border_penalty(us, na, dist, border_crossing_minutes=20)
-    # us_finite becomes inf there, so na (100) < inf - 60 is true → counts as
-    # cross-border. Hmm — is that desired? An NA-only path most likely IS a
-    # cross-border path (otherwise US-only would have found it). So yes,
-    # treating it as cross-border is correct.
-    assert n == 2
+    # NEW behavior: NaN means "no opinion," so neither leg is flagged.
+    assert n == 0
 
 
 def test_nan_in_na_does_not_create_false_border():
