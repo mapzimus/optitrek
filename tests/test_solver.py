@@ -404,3 +404,200 @@ def test_compound_states_categories_must_include():
     #    developing this test). At minimum we need 2 state-cover stops + 1
     #    forced stop = 3.
     assert len(result.order) >= 3
+
+
+# ===========================================================================
+# Time-budgeted mode (Tier 2 Phase 2). The "headline" feature from doc 05:
+# when total_trip_days is set, the solver maximizes POI value within a soft
+# time budget instead of requiring state coverage. Tests below pin the
+# mechanic at increasing levels of integration.
+# ===========================================================================
+
+from src.solver import _poi_value, _solve_time_budgeted
+
+
+def test_poi_value_uses_poi_priority_first():
+    """Per-POI override beats category fallback."""
+    cfg = TripConfig(
+        name="x",
+        poi_priority={42: 99},
+        category_priority={"national_park": 5},
+    )
+    poi = {"id": 42, "name": "P", "state": "S0",
+           "category": "national_park", "lat": 0.0, "lon": 0.0}
+    assert _poi_value(poi, cfg) == 99
+
+
+def test_poi_value_falls_back_to_category():
+    cfg = TripConfig(
+        name="x",
+        poi_priority={42: 99},
+        category_priority={"national_park": 5},
+    )
+    # POI id 100 isn't in poi_priority, so category should win
+    poi = {"id": 100, "name": "P", "state": "S0",
+           "category": "national_park", "lat": 0.0, "lon": 0.0}
+    assert _poi_value(poi, cfg) == 5
+
+
+def test_poi_value_defaults_to_zero():
+    """No poi_priority, no category_priority → 0 (incidental POI)."""
+    cfg = TripConfig(name="x")
+    poi = {"id": 1, "name": "P", "state": "S0",
+           "category": "unknown_category", "lat": 0.0, "lon": 0.0}
+    assert _poi_value(poi, cfg) == 0
+
+
+def _budget_test_pois():
+    """5 POIs in a line, varying values. Total drive (visiting all from
+    depot at idx 0 and returning) is 10 units. A tight budget forces the
+    solver to skip lower-value POIs."""
+    return [
+        {"id": 0, "name": "depot", "state": "S0",
+         "category": "depot", "lat": 0.0, "lon": 0.0},
+        {"id": 1, "name": "lowA",  "state": "S1",
+         "category": "tier3", "lat": 0.0, "lon": 1.0},
+        {"id": 2, "name": "highB", "state": "S2",
+         "category": "tier1", "lat": 0.0, "lon": 2.0},
+        {"id": 3, "name": "lowC",  "state": "S3",
+         "category": "tier3", "lat": 0.0, "lon": 3.0},
+        {"id": 4, "name": "highD", "state": "S4",
+         "category": "tier1", "lat": 0.0, "lon": 4.0},
+    ]
+
+
+def _budget_test_matrices(pois):
+    n = len(pois)
+    dur = np.zeros((n, n), dtype=np.float32)
+    dist = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                d = abs(pois[i]["lon"] - pois[j]["lon"])
+                dur[i][j] = d * 3600  # 1 lon-unit = 1 hour
+                dist[i][j] = d * 1609.344
+    return dur, dist
+
+
+def test_time_budgeted_visits_high_value_when_budget_loose():
+    """Loose budget (12h) + 4 candidates spread over 8h round-trip:
+    solver should pick all 4 since the value-vs-time tradeoff favors
+    visiting everything."""
+    pois = _budget_test_pois()
+    dur, dist = _budget_test_matrices(pois)
+    cfg = TripConfig(
+        name="x",
+        total_trip_days=2,            # 2 × 8 = 16h budget
+        category_priority={"tier1": 10, "tier3": 1},
+        time_limit_seconds=10,
+    )
+    result = _solve_time_budgeted(cfg, pois, dur, dist)
+    visited = {n.id for n in result.order}
+    # All 4 candidates + depot = 5 visited; check at minimum the two
+    # high-value POIs (2 and 4) are present.
+    assert 2 in visited and 4 in visited, (
+        f"High-value POIs (id=2, id=4) should be visited under loose budget. "
+        f"Got: {visited}"
+    )
+
+
+def test_time_budgeted_skips_low_value_when_budget_tight():
+    """Tight budget (3h, but driving to all 4 is 8h+) forces the solver
+    to prioritize: skip low-value POIs, keep high-value ones."""
+    pois = _budget_test_pois()
+    dur, dist = _budget_test_matrices(pois)
+    cfg = TripConfig(
+        name="x",
+        total_trip_days=1,
+        max_hours_per_day=3.0,        # 3h budget — visiting all 4 is impossible
+        category_priority={"tier1": 100, "tier3": 1},
+        time_budget_overage_penalty=50.0,  # strong penalty (50 pts/hour over)
+        time_limit_seconds=10,
+    )
+    result = _solve_time_budgeted(cfg, pois, dur, dist)
+    visited = {n.id for n in result.order}
+    # Solver should prefer the tier1 POIs (id 2 and 4, value=100) over
+    # the tier3 POIs (id 1 and 3, value=1). With 3h budget and 4 going
+    # to be 8h, expect tier3 POIs to drop first.
+    tier3_visited = (1 in visited) + (3 in visited)
+    tier1_visited = (2 in visited) + (4 in visited)
+    assert tier1_visited >= tier3_visited, (
+        f"Expected solver to prefer high-value POIs under tight budget. "
+        f"Visited tier1={tier1_visited}, tier3={tier3_visited}, "
+        f"all visited={visited}"
+    )
+
+
+def test_time_budgeted_must_include_overrides_value_ranking():
+    """A low/zero-value POI forced via must_include must still be visited,
+    even if the budget-aware solver wouldn't pick it on value grounds."""
+    pois = _budget_test_pois()
+    dur, dist = _budget_test_matrices(pois)
+    cfg = TripConfig(
+        name="x",
+        total_trip_days=1,
+        max_hours_per_day=3.0,        # very tight
+        category_priority={"tier1": 100},  # tier3 has value=0
+        must_include=[1],             # force the low-value POI id=1
+        time_limit_seconds=10,
+    )
+    result = _solve_time_budgeted(cfg, pois, dur, dist)
+    visited = {n.id for n in result.order}
+    assert 1 in visited, (
+        f"must_include POI 1 must be visited regardless of value. "
+        f"Got: {visited}"
+    )
+
+
+def test_time_budgeted_loop_false_excludes_closing_leg():
+    """With loop=False the reported total_cost should not include the
+    return-to-depot leg cost. Verify against a loop=True baseline on the
+    same setup."""
+    pois = _budget_test_pois()
+    dur, dist = _budget_test_matrices(pois)
+    base_kwargs = dict(
+        name="x",
+        total_trip_days=2,
+        category_priority={"tier1": 100, "tier3": 50},
+        time_limit_seconds=10,
+    )
+    result_loop = _solve_time_budgeted(
+        TripConfig(loop=True, **base_kwargs), pois, dur, dist
+    )
+    result_open = _solve_time_budgeted(
+        TripConfig(loop=False, start_state="S0", **base_kwargs), pois, dur, dist
+    )
+    # If both tours visit the same set, the open path is strictly shorter
+    # by exactly the closing leg cost. Allow equality if the tours differ
+    # (solver might pick different stops).
+    assert result_open.total_cost <= result_loop.total_cost, (
+        f"Open path cost ({result_open.total_cost:.0f}) should not exceed "
+        f"loop cost ({result_loop.total_cost:.0f})"
+    )
+
+
+def test_solve_with_config_dispatches_to_time_budgeted_when_total_days_set():
+    """The MODE switch in solve_with_config: presence of total_trip_days
+    activates time-budgeted; absence keeps state-coverage. Pin both
+    branches via patch counts."""
+    from unittest.mock import patch
+    from src.solver import solve_with_config
+
+    pois = _budget_test_pois()
+    dur, dist = _budget_test_matrices(pois)
+
+    # Branch A: total_trip_days=None → state-coverage (the old path)
+    cfg_state = TripConfig(name="x", states=["S1", "S2"], time_limit_seconds=5)
+    with patch("src.solver._solve_time_budgeted") as mock_tb:
+        solve_with_config(cfg_state, pois, dur, dist)
+    assert mock_tb.call_count == 0, "State-coverage config must not call time-budgeted"
+
+    # Branch B: total_trip_days=2 → time-budgeted. Note: `states` would
+    # normally trigger the mode-change warning; we set it to None to
+    # keep this test focused on dispatch.
+    cfg_tb = TripConfig(name="x", total_trip_days=2, time_limit_seconds=5)
+    with patch("src.solver._solve_time_budgeted") as mock_tb:
+        mock_tb.return_value = "sentinel"
+        result = solve_with_config(cfg_tb, pois, dur, dist)
+    assert mock_tb.call_count == 1, "Time-budgeted config must call _solve_time_budgeted"
+    assert result == "sentinel", "Dispatch must return the time-budgeted result"

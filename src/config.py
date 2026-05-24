@@ -79,9 +79,26 @@ class TripConfig:
     # set to 0 to suppress the penalty entirely (useful for diagnostic runs
     # or for travelers with NEXUS who clear in under 5 min).
     border_crossing_minutes: int = 20
-    # ---- Deferred to Phase 2; accepted but unused ----
+    # ---- Time-budgeted mode (Tier 2 Phase 2; the headline feature from
+    #      doc 05). When `total_trip_days` is set, the solver switches
+    #      from "state coverage" to "score maximization within budget":
+    #      compute each POI's value = poi_priority[id] ?? category_priority[cat]
+    #      ?? 0, then find the tour whose total drive time fits within
+    #      total_trip_days * max_hours_per_day * 3600 seconds while
+    #      maximizing summed value. The budget is SOFT — overage costs
+    #      time_budget_overage_penalty priority points per excess hour
+    #      so the solver may slightly exceed if a high-value POI sits
+    #      just past the line.
+    #
+    #      When `total_trip_days is None` the existing state-coverage
+    #      solver runs (`states` requires visiting ≥1 POI per state).
+    #      In time-budgeted mode `states` becomes a geographic FILTER
+    #      only (restrict candidate pool); it no longer enforces
+    #      coverage. `must_include` still hard-forces specific POIs.
     category_priority: dict[str, int] = field(default_factory=dict)
+    poi_priority: dict[int, int] = field(default_factory=dict)
     total_trip_days: int | None = None
+    time_budget_overage_penalty: float = 1.0  # priority points lost per excess hour
 
     def __post_init__(self) -> None:
         # 1. name must be filename-safe
@@ -142,18 +159,32 @@ class TripConfig:
                 f"must be in [0, 240]; got an absurd value"
             )
 
-        # 7. Deferred fields: warn when set
-        if self.category_priority:
-            warnings.warn(
-                "category_priority is accepted but ignored in Phase 1; "
-                "activates in time-budgeted mode (Phase 2)",
-                UserWarning,
-                stacklevel=2,
+        # 7. Time-budgeted-mode validation. These fields used to emit
+        # "deferred" UserWarnings; they're now wired into solve_with_config.
+        if self.total_trip_days is not None and self.total_trip_days <= 0:
+            raise TripConfigError(
+                f"total_trip_days={self.total_trip_days} must be > 0 "
+                f"(a zero-day trip can't visit anything)"
             )
-        if self.total_trip_days is not None:
+        if self.max_hours_per_day <= 0:
+            raise TripConfigError(
+                f"max_hours_per_day={self.max_hours_per_day} must be > 0"
+            )
+        if self.time_budget_overage_penalty < 0:
+            raise TripConfigError(
+                f"time_budget_overage_penalty={self.time_budget_overage_penalty} "
+                f"must be >= 0 (negative would reward exceeding the budget)"
+            )
+        # Soft caveat (warning, not error): in time-budgeted mode `states`
+        # becomes a geographic filter only, not a coverage requirement.
+        # Surface this so a trip author who set both doesn't get confused.
+        if self.total_trip_days is not None and self.states is not None:
             warnings.warn(
-                "total_trip_days is accepted but ignored in Phase 1; "
-                "activates in time-budgeted mode (Phase 2)",
+                f"total_trip_days={self.total_trip_days} engages "
+                f"time-budgeted mode; states={self.states} is now used "
+                f"only as a geographic FILTER (restrict the candidate pool) "
+                f"and no longer requires visiting ≥1 POI per state. Set "
+                f"must_include for hard 'visit this' requirements.",
                 UserWarning,
                 stacklevel=2,
             )

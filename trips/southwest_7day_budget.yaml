@@ -1,0 +1,64 @@
+# trips/southwest_7day_budget.yaml — Tier 2 PHASE 2 showcase: the
+# headline time-budgeted mode from doc 05.
+#
+# This trip says: "I have 7 days × 8 hours/day = 56 hours of driving
+# budget. Pick me the best subset of southwest NPS units to visit,
+# preferring National Parks over Monuments, with extra weight on the
+# iconic 'gotta see' ones." The solver maximizes total priority score
+# within the budget; the budget is SOFT, so it'll exceed by an hour
+# or two if a high-value POI sits just past the line (the overage
+# penalty makes that tradeoff explicit).
+#
+# How this differs from state-coverage mode:
+#   - `states` is a geographic FILTER ("only consider POIs in these
+#     states"), NOT a coverage requirement. The solver might skip a
+#     state entirely if its POIs are low-value or out of budget.
+#   - The "best trip" is one that hits the highest-value POIs without
+#     blowing the budget. Stops aren't required to be one-per-state.
+#
+# To run:
+#   ./scripts/render_new_gallery_trips.sh trips/southwest_7day_budget.yaml
+#
+# Expected output: a ~7-day loop hitting Grand Canyon + Zion + Bryce +
+# probably Arches/Canyonlands/Mesa Verde + a couple monuments along
+# the way. Solver may skip the lower-value monuments if they don't fit.
+
+name: southwest_7day_budget
+
+# Geographic filter only — coverage is NOT required in budget mode.
+states: [CA, NV, UT, AZ, NM, CO]
+
+# Engages time-budgeted mode. Total budget = 7 × 8 = 56 hours of driving.
+total_trip_days: 7
+max_hours_per_day: 8.0
+
+# Soft cap: each hour over budget costs 5 priority points. With
+# category values up to ~25 below, the solver will exceed by 1-2 hours
+# only for a really high-value POI sitting just past the line.
+time_budget_overage_penalty: 5.0
+
+# Category-level value table. Read as "I'd drive up to N hours
+# round-trip to visit one POI of this category." A national_park is
+# worth 4× more drive-detour than a national_monument.
+category_priority:
+  national_park: 20
+  national_monument: 5
+  national_historic_site: 3
+  national_recreation_area: 2
+
+# Per-POI override: a few iconic parks get extra weight beyond their
+# category default. The solver will route to these first.
+poi_priority:
+  192: 25    # Grand Canyon NP (AZ) — non-negotiable
+  # Add more here as the trip author identifies must-prioritize POIs:
+  # 89: 25   # Yellowstone (WY)
+  # 142: 22  # Zion (UT)
+
+# Loop back to the depot at the end. Set loop=false + start_state for
+# a one-way trip (e.g., LA → Albuquerque).
+loop: true
+
+# Solver budget. Time-budgeted with disjunctions is heavier than
+# state-coverage (more decisions per POI); 300s gives GLS time to find
+# a good local optimum.
+time_limit_seconds: 300

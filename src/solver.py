@@ -287,6 +287,227 @@ def _depot_index_for_config(config, pois: list[dict]) -> int:
     )
 
 
+def _poi_value(poi: dict, config) -> int:
+    """Score for visiting `poi` under the config's priority hierarchy.
+
+    Order of precedence:
+      1. poi_priority[poi.id]       — explicit per-POI value (highest)
+      2. category_priority[category] — category fallback
+      3. 0                          — unranked default
+
+    Returns an integer because OR-Tools cost-scaling works on int64. A
+    fractional priority would round to zero and silently disappear.
+    """
+    if poi["id"] in config.poi_priority:
+        return int(config.poi_priority[poi["id"]])
+    return int(config.category_priority.get(poi["category"], 0))
+
+
+def _solve_time_budgeted(
+    config,
+    pois: list[dict],
+    durations,
+    distances,
+) -> SolveResult:
+    """Score-maximizing solver: pick the subset of POIs whose tour fits
+    within a soft time budget and maximizes total `_poi_value` score.
+
+    Mechanic (OR-Tools):
+      - Each non-depot POI is wrapped in `AddDisjunction([node], penalty, 1)`
+        where penalty = poi_value * cost_scale. Higher penalty = stronger
+        cost to skip, so the solver wants to visit high-value POIs.
+      - A "time" Dimension accumulates the per-leg duration (same cost as
+        the arc cost). `SetCumulVarSoftUpperBound` on the End-of-route
+        cumul var sets the budget; each second of overage costs
+        (overage_penalty_per_hour * cost_scale / 3600) units.
+      - The arc cost evaluator returns scaled durations. The objective
+        the solver minimizes is therefore:
+            sum(arc costs) + sum(skip penalties for unvisited POIs)
+          + (overage penalty if total time > budget)
+        Minimizing skip penalties == maximizing total visited value.
+      - `must_include` adds ActiveVar==1 hard constraints (same as the
+        state-coverage path), forcing those POIs into the tour even if
+        their value is low.
+      - `loop=False` excludes the closing leg cost from the reported
+        total — OR-Tools still solves a cycle, we just don't charge it.
+
+    Why disjunctions instead of an Orienteering-Problem solver: OR-Tools
+    doesn't ship one, but its VRP-with-disjunctions reduction is the
+    standard mapping for OP and works at our problem scale (≤ a few
+    hundred POIs).
+    """
+    from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+    import time
+    import warnings
+
+    nodes = [Node(id=p["id"], state=p["state"]) for p in pois]
+    n = len(nodes)
+    depot_index = _depot_index_for_config(config, pois)
+
+    manager = pywrapcp.RoutingIndexManager(n, 1, depot_index)
+    routing = pywrapcp.RoutingModel(manager)
+
+    cost_scale = 1000  # millisecond precision (matches state-coverage path)
+
+    # Pre-round once. NaN cells become huge negative int64 (same caveat
+    # as state-coverage solver — driven by the same `validate_matrix`
+    # guard during matrix build; defensive comment kept identical).
+    scaled_durations = (np.asarray(durations) * cost_scale).round().astype(np.int64)
+
+    def time_callback(from_idx, to_idx):
+        i = manager.IndexToNode(from_idx)
+        j = manager.IndexToNode(to_idx)
+        return int(scaled_durations[i, j])
+
+    transit_callback_index = routing.RegisterTransitCallback(time_callback)
+    routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+
+    # ---- Time dimension with soft upper bound = budget ----
+    #
+    # Budget = total_trip_days × max_hours_per_day × 3600 seconds, scaled
+    # into cost_scale units. The Dimension's hard capacity is set well
+    # above the budget so the SOFT upper bound is what actually binds.
+    # Setting hard cap = budget would force a feasibility check that
+    # rejects tours whose cumulative time exceeds the budget by even
+    # one second, defeating the "soft" semantics.
+    budget_seconds = int(config.total_trip_days * config.max_hours_per_day * 3600)
+    budget_scaled = budget_seconds * cost_scale
+    hard_cap_scaled = budget_scaled * 10  # 10× headroom for the soft bound to bind first
+
+    routing.AddDimension(
+        transit_callback_index,
+        0,                # no slack between visits (no waiting allowed)
+        hard_cap_scaled,  # generous hard cap; soft cap below is what binds
+        True,             # fix_start_cumul_to_zero — depot starts at t=0
+        "time",
+    )
+    time_dim = routing.GetDimensionOrDie("time")
+
+    # Translate user's "priority points per excess hour" into the soft-
+    # upper-bound coefficient. Unit analysis (see PRIORITY_TO_DRIVE_HOUR
+    # below for the full derivation):
+    #   - cumul over budget by D scaled-cost units = D/(3600*cost_scale) hours
+    #   - we want penalty = (penalty_per_hour points) × (PRIORITY_TO_DRIVE_HOUR)
+    #                       × (hours of overage) scaled-cost units
+    #   - solving: coefficient on (D / (3600*cost_scale)) is
+    #     penalty_per_hour × 3600 × cost_scale
+    #     → coefficient applied to D itself is just penalty_per_hour
+    overage_coefficient = (
+        max(1, int(config.time_budget_overage_penalty))
+        if config.time_budget_overage_penalty > 0 else 0
+    )
+
+    if overage_coefficient > 0:
+        time_dim.SetCumulVarSoftUpperBound(
+            routing.End(0), budget_scaled, overage_coefficient
+        )
+
+    # ---- Per-POI value-as-skip-penalty ----
+    #
+    # PRIORITY_TO_DRIVE_HOUR — the fundamental unit conversion. The user
+    # writes priority points (e.g., national_park: 10). The solver
+    # minimizes scaled-cost units (cost_scale × seconds). To make those
+    # comparable, we define:
+    #
+    #     1 priority point ≡ 1 hour of driving worth of cost-pressure
+    #
+    # So skip_penalty (scaled-cost units) = value × 3600 × cost_scale.
+    # That means value=10 ⇔ "the solver will drive up to 10 hours
+    # round-trip to visit this POI," which matches the intuitive read
+    # of priority numbers in the YAML.
+    #
+    # The AddDisjunction `1` is max_cardinality: "visit this node at most
+    # once" (implicit in TSP but required by OR-Tools to mark it optional;
+    # without the disjunction the node would be REQUIRED).
+    #
+    # Negative values are clamped to 0 — a "this POI should be avoided"
+    # semantic would need a different mechanic and isn't Tier 2 v1 scope.
+    PRIORITY_TO_DRIVE_HOUR = 3600 * cost_scale
+    cp = routing.solver()
+    for i, p in enumerate(pois):
+        if i == depot_index:
+            continue
+        value = _poi_value(p, config)
+        skip_penalty = max(0, value) * PRIORITY_TO_DRIVE_HOUR
+        routing.AddDisjunction([manager.NodeToIndex(i)], skip_penalty, 1)
+
+    # ---- must_include: hard ActiveVar==1 (same pattern as state-coverage) ----
+    for must_id in config.must_include:
+        for i, p in enumerate(pois):
+            if p["id"] == must_id:
+                if i != depot_index:
+                    node_idx = manager.NodeToIndex(i)
+                    cp.Add(routing.ActiveVar(node_idx) == 1)
+                break
+
+    # ---- Search params (mirrors state-coverage path) ----
+    search_params = pywrapcp.DefaultRoutingSearchParameters()
+    search_params.first_solution_strategy = (
+        routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+    )
+    search_params.local_search_metaheuristic = (
+        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+    )
+    search_params.time_limit.FromSeconds(int(config.time_limit_seconds))
+
+    t0 = time.perf_counter()
+    solution = routing.SolveWithParameters(search_params)
+    runtime = time.perf_counter() - t0
+
+    if solution is None:
+        return SolveResult(
+            order=[], total_cost=float("inf"), leg_costs=[],
+            states_covered=set(), status="FAILED", runtime_seconds=runtime,
+        )
+
+    # ---- Extract the route (same walk-the-NextVar pattern) ----
+    index = routing.Start(0)
+    visited_node_indices: list[int] = []
+    while not routing.IsEnd(index):
+        visited_node_indices.append(manager.IndexToNode(index))
+        index = solution.Value(routing.NextVar(index))
+
+    leg_costs: list[float] = []
+    for i in range(len(visited_node_indices) - 1):
+        a = visited_node_indices[i]
+        b = visited_node_indices[i + 1]
+        leg_costs.append(float(durations[a][b]))
+    # Loop=True: charge the closing leg. Loop=False: open path.
+    if config.loop:
+        leg_costs.append(
+            float(durations[visited_node_indices[-1]][depot_index])
+        )
+
+    order_nodes = [nodes[i] for i in visited_node_indices]
+    total_cost = sum(leg_costs)
+    states_covered = {nd.state for nd in order_nodes}
+
+    # Diagnostic: compare actual cost vs budget so the user can see
+    # whether the soft cap bound. Don't make this a warning — exceeding
+    # is intentional in soft-cap semantics.
+    actual_hours = total_cost / 3600
+    budget_hours = budget_seconds / 3600
+    overage_h = actual_hours - budget_hours
+    total_value = sum(
+        _poi_value(p, config) for p in pois
+        if any(n.id == p["id"] for n in order_nodes)
+    )
+    print(
+        f">> Time-budgeted: visited {len(order_nodes)} POIs "
+        f"(value={total_value}); drive={actual_hours:.1f}h vs "
+        f"budget={budget_hours:.1f}h ({overage_h:+.1f}h)"
+    )
+
+    return SolveResult(
+        order=order_nodes,
+        total_cost=total_cost,
+        leg_costs=leg_costs,
+        states_covered=states_covered,
+        status="SUCCESS",
+        runtime_seconds=runtime,
+    )
+
+
 def solve_with_config(
     config,
     pois: list[dict],
@@ -296,17 +517,24 @@ def solve_with_config(
     """Solve the TSP defined by `config` over `pois` with `durations`/
     `distances` matrices. Returns a SolveResult. See spec §6.
 
-    Tier 2 constraint support arrives incrementally:
-      - This task (Task 5): must_include via routing.ActiveVar
-      - max_stops penalty + loop=False handling are added in later tasks.
-        The function gracefully ignores those config fields until they're
-        implemented (a max_stops config will produce more stops than
-        requested; a loop=False config will include the return-to-depot
-        cost). Both are corrected before any user-facing Tier 2 trip runs.
+    Tier 2 has two solver MODES:
+      - State-coverage (default): visit ≥1 POI per state in `config.states`,
+        minimize total travel time. The "Tier 1 with filters" semantic.
+      - Time-budgeted: when `config.total_trip_days is not None`, switch
+        to score-maximization-within-soft-budget. POI value is computed
+        via poi_priority → category_priority → 0. The solver picks the
+        subset that maximizes total value while keeping total drive time
+        near `total_trip_days * max_hours_per_day` hours (soft cap;
+        overage costs `time_budget_overage_penalty` per hour). `states`
+        becomes a geographic filter at fetch-time only — coverage is no
+        longer required.
 
     Tier 1 callers continue to use the original solve() unchanged — this
     wrapper is for config-driven trips only.
     """
+    if config.total_trip_days is not None:
+        return _solve_time_budgeted(config, pois, durations, distances)
+
     from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
     nodes = [Node(id=p["id"], state=p["state"]) for p in pois]

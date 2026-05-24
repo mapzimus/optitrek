@@ -111,11 +111,80 @@ def test_max_stops_must_be_feasible():
     TripConfig(name="x", states=["CA", "NV", "AZ"], max_stops=10)
 
 
-def test_deferred_fields_warn_when_set():
-    with pytest.warns(UserWarning, match="category_priority.*activates in time-budgeted"):
+def test_time_budgeted_fields_no_longer_deferred():
+    """category_priority and total_trip_days used to emit
+    'deferred — activates in Phase 2' UserWarnings; they're now wired
+    into solve_with_config so setting them on a fresh config should be
+    silent. Pin that to catch any regression that re-introduces a
+    deferred warning."""
+    import warnings as warnings_module
+    with warnings_module.catch_warnings(record=True) as caught:
+        warnings_module.simplefilter("always")
         TripConfig(name="x", category_priority={"National Park": 5})
-    with pytest.warns(UserWarning, match="total_trip_days.*activates in time-budgeted"):
         TripConfig(name="x", total_trip_days=14)
+    deferred_messages = [
+        str(w.message) for w in caught
+        if "activates in" in str(w.message) or "Phase 2" in str(w.message)
+    ]
+    assert not deferred_messages, (
+        f"Expected no 'deferred field' warnings, got: {deferred_messages}"
+    )
+
+
+# ---------- time-budgeted mode field validation ----------
+
+
+def test_total_trip_days_must_be_positive():
+    with pytest.raises(TripConfigError, match=r"total_trip_days.*must be > 0"):
+        TripConfig(name="x", total_trip_days=0)
+    with pytest.raises(TripConfigError, match=r"total_trip_days.*must be > 0"):
+        TripConfig(name="x", total_trip_days=-3)
+
+
+def test_max_hours_per_day_must_be_positive():
+    with pytest.raises(TripConfigError, match=r"max_hours_per_day.*must be > 0"):
+        TripConfig(name="x", max_hours_per_day=0)
+    with pytest.raises(TripConfigError, match=r"max_hours_per_day.*must be > 0"):
+        TripConfig(name="x", max_hours_per_day=-1.5)
+
+
+def test_time_budget_overage_penalty_must_be_non_negative():
+    with pytest.raises(TripConfigError, match=r"time_budget_overage_penalty.*must be >= 0"):
+        TripConfig(name="x", time_budget_overage_penalty=-0.5)
+    # zero IS allowed — means "hard budget, no overage permitted at all"
+    # is misleading (the soft-cap mechanic still works, just with zero
+    # penalty, which functionally means the budget is advisory). Test
+    # documents the intent.
+    cfg = TripConfig(name="x", time_budget_overage_penalty=0.0)
+    assert cfg.time_budget_overage_penalty == 0.0
+
+
+def test_time_budgeted_with_states_warns_about_mode_change():
+    """When a trip author sets BOTH total_trip_days and states, they may
+    not realize states is now just a filter (not a coverage requirement).
+    Pin the warning so this UX detail can't silently regress."""
+    with pytest.warns(UserWarning, match=r"time-budgeted mode.*geographic FILTER"):
+        TripConfig(
+            name="x",
+            total_trip_days=7,
+            states=["CA", "UT", "AZ"],
+        )
+
+
+def test_time_budgeted_without_states_does_not_warn():
+    """Inverse: time-budgeted without states is the clean case, no
+    warning should fire."""
+    import warnings as warnings_module
+    with warnings_module.catch_warnings(record=True) as caught:
+        warnings_module.simplefilter("always")
+        TripConfig(name="x", total_trip_days=7)
+    mode_warnings = [w for w in caught if "geographic FILTER" in str(w.message)]
+    assert not mode_warnings
+
+
+def test_poi_priority_accepts_int_dict():
+    cfg = TripConfig(name="x", poi_priority={42: 10, 107: 5})
+    assert cfg.poi_priority == {42: 10, 107: 5}
 
 
 def test_routing_network_default_is_us():
