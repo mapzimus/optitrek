@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}Optitrek — build a trip{% endblock %}
+
+{% block content %}
+<form action="/solve" method="post" class="space-y-6">
+
+  <!-- =============================================== -->
+  <!-- 1. Basics                                       -->
+  <!-- =============================================== -->
+  <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <h2 class="text-lg font-semibold mb-1">Basics</h2>
+    <p class="text-sm text-gray-500 mb-4">
+      The trip name becomes the output filename — keep it filename-safe
+      (letters, digits, dashes, underscores).
+    </p>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <label class="block">
+        <span class="text-sm font-medium">Trip name</span>
+        <input type="text" name="name" required pattern="[A-Za-z0-9_\-]+"
+               value="my_trip"
+               class="mt-1 w-full">
+      </label>
+
+      <label class="block">
+        <span class="text-sm font-medium">Solver time budget (seconds)</span>
+        <input type="number" name="time_limit_seconds" min="1" max="3600"
+               value="120"
+               class="mt-1 w-full">
+        <span class="text-xs text-gray-500">300s is the Tier-1 oracle default. Bump for cross-border trips.</span>
+      </label>
+    </div>
+
+    <label class="inline-flex items-center mt-4 gap-2">
+      <input type="checkbox" name="loop" checked class="rounded">
+      <span class="text-sm">Loop (return to depot at the end)</span>
+    </label>
+  </section>
+
+  <!-- =============================================== -->
+  <!-- 2. POI filters                                  -->
+  <!-- =============================================== -->
+  <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <h2 class="text-lg font-semibold mb-1">POI filters</h2>
+    <p class="text-sm text-gray-500 mb-4">
+      Narrow the candidate pool. Leave blank to consider all NPS units.
+      In <em>state-coverage mode</em> (default), <code>states</code> requires
+      visiting ≥1 POI per state. In <em>time-budgeted mode</em> (see below),
+      <code>states</code> becomes a geographic filter only.
+    </p>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <label class="block">
+        <span class="text-sm font-medium">States</span>
+        <select name="states" multiple size="8" class="mt-1 w-full">
+          {% for st in states %}
+            <option value="{{ st }}">{{ st }}</option>
+          {% endfor %}
+        </select>
+        <span class="text-xs text-gray-500">
+          Ctrl/Cmd-click for multi-select. Empty = all 48 contiguous + DC.
+        </span>
+      </label>
+
+      <label class="block">
+        <span class="text-sm font-medium">Categories</span>
+        <select name="categories" multiple size="8" class="mt-1 w-full">
+          {% for cat in categories %}
+            <option value="{{ cat }}">{{ cat }}</option>
+          {% endfor %}
+        </select>
+        <span class="text-xs text-gray-500">
+          E.g. just <code>national_park</code> for a parks-only trip.
+        </span>
+      </label>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+      <label class="block">
+        <span class="text-sm font-medium">Max radius (miles)</span>
+        <input type="number" name="max_radius_miles" min="0" step="any"
+               class="mt-1 w-full">
+        <span class="text-xs text-gray-500">
+          Requires Start state. POIs farther than this from the start
+          state's centroid are filtered out.
+        </span>
+      </label>
+
+      <label class="block">
+        <span class="text-sm font-medium">Start state (depot anchor)</span>
+        <select name="start_state" class="mt-1 w-full">
+          <option value="">— none —</option>
+          {% for st in states %}
+            <option value="{{ st }}">{{ st }}</option>
+          {% endfor %}
+        </select>
+        <span class="text-xs text-gray-500">
+          Required for max_radius and loop=false.
+        </span>
+      </label>
+    </div>
+  </section>
+
+  <!-- =============================================== -->
+  <!-- 3. Required visits (must_include + search)      -->
+  <!-- =============================================== -->
+  <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <h2 class="text-lg font-semibold mb-1">Required visits</h2>
+    <p class="text-sm text-gray-500 mb-4">
+      Force specific POIs into the tour. Use the search box to look up
+      POI IDs, then paste them into the field below.
+    </p>
+
+    <label class="block mb-3">
+      <span class="text-sm font-medium">Search POIs</span>
+      <input type="search"
+             placeholder="Type a name fragment (e.g., 'grand canyon')…"
+             hx-get="/api/poi-search"
+             hx-trigger="keyup changed delay:300ms"
+             hx-target="#poi-search-results"
+             hx-include="this"
+             name="q"
+             class="mt-1 w-full">
+    </label>
+    <div id="poi-search-results"
+         class="border border-gray-200 rounded text-sm bg-gray-50 max-h-48 overflow-auto">
+      <div class="p-3 text-gray-400">Search results will appear here.</div>
+    </div>
+
+    <label class="block mt-4">
+      <span class="text-sm font-medium">must_include (comma-separated POI IDs)</span>
+      <input type="text" name="must_include" placeholder="42, 107, 192"
+             class="mt-1 w-full font-mono">
+    </label>
+
+    <label class="block mt-4">
+      <span class="text-sm font-medium">max_stops (cap on visited POIs)</span>
+      <input type="number" name="max_stops" min="1" class="mt-1 w-full sm:w-1/2">
+      <span class="text-xs text-gray-500">
+        Soft penalty — see DECISIONS.md. Leave blank for no cap.
+      </span>
+    </label>
+  </section>
+
+  <!-- =============================================== -->
+  <!-- 4. Daily driving cap                            -->
+  <!-- =============================================== -->
+  <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <h2 class="text-lg font-semibold mb-1">Daily driving</h2>
+    <p class="text-sm text-gray-500 mb-4">
+      Used to color-code the rendered map by day.
+    </p>
+    <label class="block">
+      <span class="text-sm font-medium">max_hours_per_day</span>
+      <input type="number" name="max_hours_per_day" min="0.5" step="0.5"
+             value="8.0" class="mt-1 w-full sm:w-1/2">
+    </label>
+  </section>
+
+  <!-- =============================================== -->
+  <!-- 5. Routing engine (D5 — collapsed)              -->
+  <!-- =============================================== -->
+  <details class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <summary class="text-lg font-semibold">Routing engine
+      <span class="ml-2 text-xs text-gray-400">(D5 cross-border opt-in)</span>
+    </summary>
+    <p class="text-sm text-gray-500 mt-2 mb-4">
+      Default <code>us</code> uses the US-only OSRM (Tier 1 baseline).
+      Pick <code>us_canada</code> for trips where Canadian highways are
+      genuinely faster (Detroit↔Buffalo, Niagara↔Sault Ste M). The
+      cross-border engine penalizes each detected border-crossing leg
+      by <code>2 × border_crossing_minutes</code> of customs time.
+    </p>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <label class="block">
+        <span class="text-sm font-medium">routing_network</span>
+        <select name="routing_network" class="mt-1 w-full">
+          <option value="us" selected>us (default, port 5000)</option>
+          <option value="us_canada">us_canada (port 5001)</option>
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="text-sm font-medium">border_crossing_minutes</span>
+        <input type="number" name="border_crossing_minutes" min="0" max="240"
+               value="20" class="mt-1 w-full">
+        <span class="text-xs text-gray-500">
+          20 = CBP/CBSA weekday average. 0 = NEXUS / diagnostic.
+        </span>
+      </label>
+    </div>
+  </details>
+
+  <!-- =============================================== -->
+  <!-- 6. Time-budgeted mode (the Tier 2 headline)     -->
+  <!-- =============================================== -->
+  <details class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <summary class="text-lg font-semibold">Time-budgeted mode
+      <span class="ml-2 text-xs text-gray-400">(Tier 2 headline · score-maximization)</span>
+    </summary>
+    <p class="text-sm text-gray-500 mt-2 mb-4">
+      Setting <code>total_trip_days</code> switches the solver from
+      <em>state coverage</em> to <em>score maximization within a soft
+      time budget</em>. Each POI has a value computed from
+      <code>poi_priority</code> (per-POI override) ↓
+      <code>category_priority</code> (category fallback) ↓ <code>0</code>.
+      Read priority as "hours of driving I'd accept to visit this POI."
+    </p>
+
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+      <label class="block">
+        <span class="text-sm font-medium">total_trip_days</span>
+        <input type="number" name="total_trip_days" min="1" max="60"
+               placeholder="(blank = state-coverage mode)"
+               class="mt-1 w-full">
+      </label>
+      <label class="block">
+        <span class="text-sm font-medium">overage penalty (pts/hr)</span>
+        <input type="number" name="time_budget_overage_penalty" min="0" step="0.1"
+               value="1.0" class="mt-1 w-full">
+      </label>
+      <div class="text-xs text-gray-500 self-end">
+        Higher overage penalty = harder cap.
+      </div>
+    </div>
+
+    <h3 class="text-sm font-semibold mt-4 mb-2">category_priority (table)</h3>
+    <p class="text-xs text-gray-500 mb-2">
+      Set a priority for each category you care about. Categories with
+      no value are treated as 0 (incidental — visited only if on the way).
+    </p>
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {% for cat in categories %}
+        <label class="flex items-center justify-between gap-2 text-sm
+                      bg-gray-50 px-3 py-2 rounded border border-gray-100">
+          <span class="font-mono text-xs">{{ cat }}</span>
+          <input type="number" name="category_priority[{{ cat }}]"
+                 min="0" max="100"
+                 class="w-16 text-right">
+        </label>
+      {% endfor %}
+    </div>
+
+    <h3 class="text-sm font-semibold mt-6 mb-2">poi_priority (per-POI override)</h3>
+    <p class="text-xs text-gray-500 mb-2">
+      One <code>POI_ID: value</code> per line. Overrides category_priority
+      for those specific POIs. Lines starting with <code>#</code> are
+      comments. Look up IDs in the search box above.
+    </p>
+    <textarea name="poi_priority_textarea" rows="5"
+              placeholder="# Example:&#10;192: 25     # Grand Canyon NP (AZ)&#10;# 89:  25   # Yellowstone NP (WY)"
+              class="w-full font-mono text-sm"></textarea>
+  </details>
+
+  <!-- =============================================== -->
+  <!-- Submit                                          -->
+  <!-- =============================================== -->
+  <div class="flex items-center justify-between">
+    <p class="text-xs text-gray-500">
+      Solve runs synchronously — expect ~30s to ~5min depending on
+      pool size and time_limit_seconds. (Stage 2 will add email-on-completion
+      for longer solves.)
+    </p>
+    <button type="submit"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded
+                   font-semibold shadow-sm transition-colors">
+      Solve trip
+    </button>
+  </div>
+
+</form>
+{% endblock %}

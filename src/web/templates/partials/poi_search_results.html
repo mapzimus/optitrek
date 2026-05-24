@@ -1,0 +1,34 @@
+{% if q and not results %}
+  <div class="p-3 text-gray-500 text-sm">
+    No POIs match <code>{{ q }}</code>.
+  </div>
+{% elif not q %}
+  <div class="p-3 text-gray-400 text-sm">Search results will appear here.</div>
+{% else %}
+  <ul class="divide-y divide-gray-200">
+    {% for poi in results %}
+      <li class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex items-baseline gap-3"
+          onclick="
+            const target = document.querySelector('input[name=must_include]');
+            if (target) {
+              const existing = target.value.trim().replace(/,$/, '');
+              const sep = existing ? ', ' : '';
+              const already = existing.split(/\s*,\s*/).includes('{{ poi.id }}');
+              if (!already) target.value = existing + sep + '{{ poi.id }}';
+              this.style.background = '#dcfce7';
+            }
+          "
+          title="Click to add POI #{{ poi.id }} to must_include">
+        <span class="font-mono text-xs text-gray-500 w-12 shrink-0">#{{ poi.id }}</span>
+        <span class="flex-1">{{ poi.name }}</span>
+        <span class="text-xs text-gray-500">{{ poi.state }}</span>
+        <span class="text-xs text-gray-400 font-mono">{{ poi.category }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+  {% if results|length >= 25 %}
+    <div class="p-2 text-xs text-gray-500 bg-gray-50 border-t border-gray-200">
+      Showing first 25 — narrow the search to see more.
+    </div>
+  {% endif %}
+{% endif %}

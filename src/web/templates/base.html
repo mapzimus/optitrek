@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Optitrek{% endblock %}</title>
+  <!-- Tailwind via CDN — zero build step. The Play CDN compiles classes
+       in the browser; fine for local dev, would be swapped for a built
+       tailwind.css in Stage 3 (deploy). -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- htmx 2.x — server-rendered partials with declarative attrs. -->
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <style>
+    /* Tweaks that don't fit Tailwind utilities cleanly. */
+    details > summary { cursor: pointer; user-select: none; }
+    details > summary::marker { color: #6b7280; }
+    /* Tighten the form: Tailwind's default form widget styling is
+       inconsistent across browsers; force a neutral baseline. */
+    input[type="text"], input[type="number"], textarea, select {
+      @apply border border-gray-300 rounded px-2 py-1 text-sm;
+    }
+    input[type="text"]:focus, input[type="number"]:focus,
+    textarea:focus, select:focus {
+      @apply outline-none border-blue-500 ring-1 ring-blue-500;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans">
+  <header class="bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-4xl mx-auto px-6 py-4 flex items-baseline justify-between">
+      <a href="/" class="text-xl font-bold tracking-tight">Optitrek</a>
+      <span class="text-xs text-gray-500">
+        algorithmic road-trip optimizer · contiguous US (D5 cross-border opt-in)
+      </span>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="max-w-4xl mx-auto px-6 py-6 text-xs text-gray-400">
+    Stage 1 (local dev) · uvicorn + FastAPI + htmx ·
+    <a href="https://github.com/mapzimus/optitrek" class="underline">github.com/mapzimus/optitrek</a>
+  </footer>
+</body>
+</html>
