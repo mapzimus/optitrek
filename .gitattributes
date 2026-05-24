@@ -1,0 +1,12 @@
+# Exclude Folium-rendered map outputs from GitHub language statistics.
+#
+# The 12 HTML files in gallery/ are publication-ready showcase artifacts
+# (~45 MB total). They render interactively on github.com and are part of
+# the project's portfolio surface — they should stay in the repo.
+#
+# But by raw byte count they dwarf the ~170 KB of Python that actually
+# defines the project, which made GitHub's language detector classify
+# optitrek as primarily HTML. `linguist-generated=true` keeps the files
+# in the repo (and in diffs, just collapsed by default) but excludes
+# them from the language stats.
+gallery/*.html linguist-generated=true
