@@ -366,7 +366,16 @@ def solve_with_config(
         else:
             # Non-required state: soft-optional + hard CP forbid, matching
             # solve() capped mode. Removes nodes from GLS search space entirely.
-            for ri in routing_indices:
+            #
+            # EXCEPTION: must_include POIs in a non-required state. The
+            # must_include loop below adds ActiveVar == 1 for those nodes
+            # — adding ActiveVar == 0 here too would be a hard contradiction
+            # and OR-Tools would return FAIL with an empty solution. Skip
+            # them here and let the must_include loop force the visit.
+            for i_poi in non_depot:
+                if pois[i_poi]["id"] in config.must_include:
+                    continue
+                ri = manager.NodeToIndex(i_poi)
                 routing.AddDisjunction([ri], 0)
                 cp.Add(routing.ActiveVar(ri) == 0)
 

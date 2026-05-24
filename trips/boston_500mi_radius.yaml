@@ -1,0 +1,23 @@
+# trips/boston_500mi_radius.yaml — Tier 2 demo: max_radius + start_state.
+#
+# A 500-mile circle around Boston pulls in NPS units across most of New
+# England plus the Mid-Atlantic — roughly MA, NH, VT, ME, RI, CT, NY, NJ,
+# PA, MD, DC, DE, VA, WV (the radius gate is geographic, not political).
+# Solver picks one per state-that-survived-the-radius-filter and loops
+# back to a Boston-area POI.
+#
+# Demonstrates:
+#   - max_radius_miles + start_state (the radius gate at fetch_pois,
+#     via PostGIS ST_DWithin against the start_state's centroid)
+#   - the "required states" set being computed dynamically from
+#     "states that have surviving POIs after the radius filter"
+#     rather than from an explicit `states` list
+#
+# Loop is true (default), so the depot ends up in MA and the route
+# closes back to it. start_state pinning makes the depot deterministic;
+# without it the radius gate would have no anchor.
+name: boston_500mi_radius
+start_state: MA
+max_radius_miles: 500
+loop: true
+time_limit_seconds: 120

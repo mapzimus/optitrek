@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# render_new_gallery_trips.sh — batch-render the four new gallery trips in
-# one OSRM session. Mirrors run_oracle.sh's lifecycle pattern (single docker
-# start, trap-on-exit stop) but iterates a list of YAMLs.
+# render_new_gallery_trips.sh — batch-render one or more gallery trips in a
+# single OSRM session. Mirrors run_oracle.sh's lifecycle pattern (single
+# docker start, trap-on-exit stop) but iterates a list of YAMLs.
 #
-# Usage (from WSL Ubuntu):
-#   cd /mnt/e/dev/optitrek
+# Usage (from WSL Ubuntu, cd /mnt/e/dev/optitrek):
+#   # Run default batch (the four maps 10-13):
 #   ./scripts/render_new_gallery_trips.sh
+#
+#   # Run a custom batch by passing YAML paths:
+#   ./scripts/render_new_gallery_trips.sh trips/all_national_seashores.yaml trips/boston_500mi_radius.yaml
+#
+# Trips are run sequentially; failure on one does not stop the rest.
 
 set -euo pipefail
 
@@ -16,12 +21,19 @@ OSRM_DIR="${REPO_ROOT}/data/osrm-major"
 CONTAINER_NAME="optitrek-osrm-major"
 OSRM_URL="http://127.0.0.1:5000"
 
-TRIPS=(
+# Default batch (the original four maps 10-13). Override by passing YAML
+# paths as command-line args.
+DEFAULT_TRIPS=(
     "trips/all_national_parks.yaml"
     "trips/civil_war_battlefields.yaml"
     "trips/pacific_northwest_parks.yaml"
     "trips/east_to_west_open_path.yaml"
 )
+if [ $# -gt 0 ]; then
+    TRIPS=("$@")
+else
+    TRIPS=("${DEFAULT_TRIPS[@]}")
+fi
 
 log() { printf '\033[36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
 cleanup() { docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true; }

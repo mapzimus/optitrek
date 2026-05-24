@@ -269,3 +269,138 @@ def test_loop_false_returns_shorter_total_than_loop_true():
         f"Open path ({res_open.total_cost}s) should be shorter than "
         f"loop ({res_loop.total_cost}s)"
     )
+
+
+def test_max_stops_is_soft_warns_when_violated():
+    """max_stops is a SOFT penalty, not a hard constraint. When the routing
+    savings from adding extra stops exceed `excess_stop_penalty`, the
+    solver knowingly visits more than max_stops AND emits a UserWarning
+    pointing at the knob to turn. This characterization test pins both:
+
+      - the soft semantics (a future refactor that makes it hard would
+        change this assertion)
+      - the warning message shape (any rewording would break the regex
+        and force the docs / CLI help text to be updated in lockstep)
+
+    Setup: 3 states, S0 has 3 colinear POIs that make great waypoints
+    between S1 and S2. The natural uncapped optimum visits 4 stops to use
+    one S0 waypoint. With max_stops=3 and the current default penalty,
+    the routing savings (~50%) dominate the cap penalty, so the solver
+    intentionally violates.
+
+    A complementary test, `test_max_stops_keeps_tour_under_cap`, covers
+    the case where the cap DOES bind (different geometry — see that test
+    for the bound-cap regime)."""
+    pois = [
+        # S0 has 3 colinear POIs that could serve as waypoints
+        {"id": 0, "name": "S0_W", "state": "S0", "category": "x",
+         "lat": 0.0, "lon": 0.0},
+        {"id": 1, "name": "S0_M", "state": "S0", "category": "x",
+         "lat": 0.0, "lon": 5.0},
+        {"id": 2, "name": "S0_E", "state": "S0", "category": "x",
+         "lat": 0.0, "lon": 10.0},
+        # S1 in the middle vertically
+        {"id": 3, "name": "S1",   "state": "S1", "category": "x",
+         "lat": 5.0, "lon": 5.0},
+        # S2 far to the east
+        {"id": 4, "name": "S2",   "state": "S2", "category": "x",
+         "lat": 0.0, "lon": 15.0},
+    ]
+    n = len(pois)
+    dur = np.zeros((n, n), dtype=np.float32)
+    dist = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                d = ((pois[i]["lat"] - pois[j]["lat"]) ** 2 +
+                     (pois[i]["lon"] - pois[j]["lon"]) ** 2) ** 0.5
+                dur[i][j] = d * 3600
+                dist[i][j] = d * 1609.344
+
+    cfg_capped = TripConfig(
+        name="x", states=["S0", "S1", "S2"], max_stops=3, time_limit_seconds=10,
+    )
+    # Solver should violate the cap AND warn. Both have to fire — a future
+    # refactor that drops the warning but keeps the violation would silently
+    # leave callers in the dark.
+    with pytest.warns(UserWarning, match=r"exceeding max_stops=3"):
+        result = solve_with_config(cfg_capped, pois, dur, dist)
+
+    assert len(result.order) > 3, (
+        f"Tour was {len(result.order)} stops — expected > 3 since the soft "
+        f"penalty should not bind on this waypoint-shaped graph. If this "
+        f"asserts, either the penalty got stronger or the graph no longer "
+        f"makes extras valuable enough to outweigh it."
+    )
+
+
+def test_compound_states_categories_must_include():
+    """All three filter-y config knobs together. This is the interaction
+    test — each constraint has its own unit test, but cross-interactions
+    (must_include forcing a stop outside the `states` list, while
+    `categories` rides through unused by the solver) only show up when
+    everything's applied at once.
+
+    Setup: states=[S0, S1], categories=[type1] (carried but the solver
+    doesn't filter on it — fetch_pois does). must_include=[99] forces a
+    POI in S2 (outside `states`, different category). No max_stops here
+    — the soft-cap interaction is exercised by
+    test_max_stops_is_soft_warns_when_violated above. The compound test
+    deliberately keeps max_stops loose so the failure mode we're hunting
+    is "did must_include + state coverage interact correctly" not "did
+    the penalty math become unsatisfiable."
+    """
+    pois = [
+        {"id": 10, "name": "S0_t1_a", "state": "S0", "category": "type1",
+         "lat": 0.0, "lon": 0.0},
+        {"id": 11, "name": "S0_t1_b", "state": "S0", "category": "type1",
+         "lat": 0.0, "lon": 1.0},
+        {"id": 20, "name": "S1_t1",   "state": "S1", "category": "type1",
+         "lat": 1.0, "lon": 0.0},
+        # Forced inclusion target: NOT in states list, NOT in categories list.
+        # In a real trip this row would come from fetch_pois's must_include
+        # union (covered by test_must_include_outside_filter_emits_warning).
+        # Here we hand it to the solver directly to isolate the solver-side
+        # behavior.
+        {"id": 99, "name": "S2_t2",   "state": "S2", "category": "type2",
+         "lat": 2.0, "lon": 2.0},
+    ]
+    n = len(pois)
+    dur = np.zeros((n, n), dtype=np.float32)
+    dist = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                d = ((pois[i]["lat"] - pois[j]["lat"]) ** 2 +
+                     (pois[i]["lon"] - pois[j]["lon"]) ** 2) ** 0.5
+                dur[i][j] = d * 3600
+                dist[i][j] = d * 1609.344
+
+    cfg = TripConfig(
+        name="x",
+        states=["S0", "S1"],
+        categories=["type1"],       # carried through but unused by solver
+        must_include=[99],
+        # No max_stops — the soft cap is tested elsewhere; here we want
+        # to verify state-coverage + must_include compose cleanly.
+        time_limit_seconds=10,
+    )
+    result = solve_with_config(cfg, pois, dur, dist)
+
+    visited_ids = {node.id for node in result.order}
+    visited_states = {node.state for node in result.order}
+
+    # 1. Forced POI is in the tour
+    assert 99 in visited_ids, (
+        f"must_include POI 99 was dropped. visited_ids={visited_ids}, "
+        f"status={result.status}"
+    )
+    # 2. Required states are covered (S0 and S1 — S2 isn't required, it's
+    #    only present because of must_include)
+    assert "S0" in visited_states and "S1" in visited_states, (
+        f"Required state coverage broken. visited_states={visited_states}"
+    )
+    # 3. Tour is non-degenerate (the empty-result failure mode we hit while
+    #    developing this test). At minimum we need 2 state-cover stops + 1
+    #    forced stop = 3.
+    assert len(result.order) >= 3

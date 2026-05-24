@@ -1,0 +1,16 @@
+# trips/all_national_seashores.yaml — every National Seashore in the contiguous US.
+#
+# 10 candidates total (Cape Cod, Fire Island, Assateague, Cape Hatteras,
+# Cape Lookout, Cumberland Island, Canaveral, Gulf Islands, Padre Island,
+# Point Reyes — modulo any closures in the DB snapshot). The solver
+# visits one per state, which collapses to ~7 states-with-seashores and
+# produces a striking coastal loop.
+#
+# Demonstrates: category filter on a single, small, geographically
+# distributed designation. Unlike national_park (56 candidates) or
+# national_battlefield (clustered in the East), seashores naturally
+# trace both coasts, which the solver makes visually obvious.
+name: all_national_seashores
+categories: [national_seashore]
+loop: true
+time_limit_seconds: 120

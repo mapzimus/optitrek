@@ -63,3 +63,93 @@ def test_single_stop_raises_single_stop_tour():
     )):
         with pytest.raises(SingleStopTour, match="need at least 2"):
             fetch_pois(cfg)
+
+
+def test_must_include_outside_filter_emits_warning():
+    """When a must_include POI is in the DB but outside the natural filter
+    scope, fetch_pois unions it back AND emits a UserWarning. The warning is
+    the only signal a trip author has that an override happened — without
+    this characterization, a future refactor could silently drop the warn()
+    call and the visible UX would only break for trips that hit the override
+    path. Pin the message text so the test catches both behavior changes
+    (warning dropped) AND wording changes that would break documentation."""
+    from unittest.mock import patch, MagicMock
+
+    fake_cur = MagicMock()
+    cols = ["id", "name", "state", "category", "lat", "lon"]
+    fake_cur.description = []
+    for name in cols:
+        col = MagicMock()
+        col.name = name
+        fake_cur.description.append(col)
+
+    # First execute: natural-filter result (just Acadia in ME — config says
+    # states=[ME], categories=[national_park]). Second execute: the
+    # must_include POI (Grand Canyon in AZ — outside the filter scope).
+    fake_cur.fetchall.side_effect = [
+        [(2, "Acadia National Park", "ME", "national_park", 44.35, -68.21)],
+        [(1, "Grand Canyon National Park", "AZ", "national_park", 36.06, -112.14)],
+    ]
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cur
+
+    cfg = TripConfig(
+        name="x",
+        states=["ME"],
+        categories=["national_park"],
+        must_include=[1],
+    )
+    with patch("src.poi_query.get_conn", return_value=MagicMock(
+        __enter__=lambda self: fake_conn, __exit__=lambda *a: None,
+    )):
+        with pytest.warns(UserWarning, match=r"must_include POI 1.*outside the filter"):
+            pois = fetch_pois(cfg)
+
+    # Override succeeded: both rows present, sorted by (state, id).
+    # AZ < ME so Grand Canyon (id=1) comes first.
+    assert len(pois) == 2
+    assert pois[0]["id"] == 1 and pois[0]["state"] == "AZ"
+    assert pois[1]["id"] == 2 and pois[1]["state"] == "ME"
+
+
+def test_must_include_inside_filter_does_not_warn():
+    """Inverse case: must_include POI that's ALSO in the natural filter
+    result should NOT emit a warning — there's no override happening, the
+    POI was already going to be visited. This pins that we don't warn
+    spuriously on trips that pre-include their must-haves."""
+    from unittest.mock import patch, MagicMock
+    import warnings as warnings_module
+
+    fake_cur = MagicMock()
+    cols = ["id", "name", "state", "category", "lat", "lon"]
+    fake_cur.description = []
+    for name in cols:
+        col = MagicMock()
+        col.name = name
+        fake_cur.description.append(col)
+
+    # Natural filter returns BOTH Acadia and a second ME POI — must_include
+    # asks for the second one, which is already in the result, so no
+    # second query happens.
+    fake_cur.fetchall.side_effect = [
+        [
+            (2, "Acadia National Park", "ME", "national_park", 44.35, -68.21),
+            (7, "Katahdin Woods", "ME", "national_monument", 46.10, -68.86),
+        ],
+    ]
+
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cur
+
+    cfg = TripConfig(name="x", states=["ME"], must_include=[7])
+    with patch("src.poi_query.get_conn", return_value=MagicMock(
+        __enter__=lambda self: fake_conn, __exit__=lambda *a: None,
+    )):
+        with warnings_module.catch_warnings(record=True) as caught:
+            warnings_module.simplefilter("always")
+            pois = fetch_pois(cfg)
+        # No must_include-related UserWarning fired
+        assert not any("must_include" in str(w.message) for w in caught)
+
+    assert len(pois) == 2

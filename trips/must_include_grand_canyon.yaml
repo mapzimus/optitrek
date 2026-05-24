@@ -1,0 +1,27 @@
+# trips/must_include_grand_canyon.yaml — Tier 2 demo: must_include forcing
+# a POI that's outside the natural filter scope.
+#
+# The natural scope of this config is a New England loop (states list +
+# national_park category → just Acadia in ME). must_include forces POI
+# id 192 (Grand Canyon National Park, AZ) into the candidate set. That
+# POI is in AZ, NOT in our states list, so poi_query.fetch_pois() logs
+# a UserWarning ("must_include POI X is outside filter scope") before
+# returning it anyway. The solver then has to route Acadia → Grand
+# Canyon → back to Acadia (because loop=true), producing a 2-stop tour
+# that's deliberately absurd to make the override behavior visible.
+#
+# Demonstrates:
+#   - must_include override behavior + warning surface
+#   - what happens when must_include adds a state to the required-states
+#     set that wasn't in `states` (it's still required to cover that POI,
+#     just by virtue of including it)
+#
+# Why a single ME state: keeping the natural candidate pool small makes
+# the forced inclusion of Grand Canyon visually obvious in the map.
+# Add more states to see the override layered onto a larger loop.
+name: must_include_grand_canyon
+states: [ME]
+categories: [national_park]
+must_include: [192]    # Grand Canyon National Park (AZ), POI id from pois table
+loop: true
+time_limit_seconds: 60
