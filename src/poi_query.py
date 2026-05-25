@@ -18,8 +18,37 @@ from src.config import (
 from src.db import get_conn
 
 
-_EXCLUDED_STATES = ["AK", "HI"]
+# Two-tier exclusion list. The split exists because of D5: with the
+# US+Canada OSRM engine, AK becomes legitimately reachable via the
+# Alaska Highway through BC + Yukon (verified Seattle→Anchorage on
+# the NA engine: 2,363 mi / 51 h). Other excluded states (HI, US
+# territories) are unreachable by road regardless of routing engine.
+#
+# `_ALWAYS_EXCLUDED` — never in any candidate pool. HI is an island;
+#     PR/VI/GU/MP/AS are territories outside REQUIRED_STATES and
+#     outside any of our OSRM extracts.
+# `_AK_REQUIRES_NA_ENGINE` — included only when `routing_network ==
+#     'us_canada'`. With routing_network='us' the matrix would have
+#     NaN everywhere between AK POIs and the rest of the continent,
+#     so AK POIs are filtered out at fetch time.
+#
+# Tier 1's matrix_builder.EXCLUDED_STATES stays {"AK", "HI"}
+# unconditionally because Tier 1 always runs on the US-only engine
+# (D3); the conditional logic only matters at the Tier 2 fetch layer.
+_ALWAYS_EXCLUDED = ["HI", "PR", "VI", "GU", "MP", "AS"]
+_AK_REQUIRES_NA_ENGINE = "AK"
 _METERS_PER_MILE = 1609.344
+
+
+def _excluded_states_for_config(config: TripConfig) -> list[str]:
+    """Resolve the SQL-level exclusion list based on the trip's routing
+    network. Default config (routing_network='us') drops AK because the
+    US-only OSRM can't route to it; opting into 'us_canada' brings AK
+    into scope via the Alcan."""
+    excluded = list(_ALWAYS_EXCLUDED)
+    if config.routing_network != "us_canada":
+        excluded.append(_AK_REQUIRES_NA_ENGINE)
+    return excluded
 
 
 def build_query(config: TripConfig) -> tuple[str, dict]:
@@ -31,7 +60,7 @@ def build_query(config: TripConfig) -> tuple[str, dict]:
         "state IS NOT NULL",
         "state <> ALL(%(excluded)s)",
     ]
-    params: dict = {"excluded": list(_EXCLUDED_STATES)}
+    params: dict = {"excluded": _excluded_states_for_config(config)}
 
     if config.states is not None:
         where_clauses.append("state = ANY(%(states)s)")

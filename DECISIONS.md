@@ -81,9 +81,25 @@ Without this, the solver picks Canada shortcuts that lose time net of customs. W
 
 The penalty only applies when `routing_network: us_canada`. The `us` engine's matrix is built once for both purposes: detection baseline and (when applicable) the solver's input.
 
+**D5 follow-up (2026-05-25): Alaska becomes conditionally reachable.**
+
+D3 excluded AK from the candidate pool because the US-only OSRM extract can't route to it. With D5's US+Canada engine, AK is reachable via the Alaska Highway (BC + Yukon). Verified empirically: Seattle → Anchorage on the NA engine returns 2,363 mi / 51.0 h — accurate for the actual Alcan drive.
+
+The exclusion was therefore split:
+- `_ALWAYS_EXCLUDED = ["HI", "PR", "VI", "GU", "MP", "AS"]` — road-unreachable regardless of engine
+- `_AK_REQUIRES_NA_ENGINE = "AK"` — included only when `routing_network='us_canada'`
+
+End-to-end effect (`scripts/probe_ak_optin.py`):
+- `routing_network='us'` → 437 candidates, 0 in AK (preserves Tier 1 oracle exactly)
+- `routing_network='us_canada'` → 456 candidates, 19 in AK (Denali, Wrangell-St. Elias, Gates of the Arctic, Glacier Bay, …)
+
+Tier 1's `matrix_builder.EXCLUDED_STATES = {"AK", "HI"}` stays unconditional because Tier 1 always runs on the US-only engine. The conditional logic lives only in Tier 2's `src/poi_query.py:_excluded_states_for_config()`.
+
+Why this matters: an AK-anchored trip (e.g., `must_include` Denali, depot in Seattle) is now solver-reachable but extremely expensive (~50 h one-way drive on top of intra-AK travel). The time-budgeted solver's economy handles it correctly — an AK POI's priority value must outweigh several hundred priority-points-worth of drive time to be picked.
+
 ---
 
 ## Implementation notes (not blocking decisions, but worth recording)
 
-- **Alaska & Hawaii NPS units** will be ingested into the `pois` table for future use but **excluded from the coverage requirement and the solver candidate set** for Tier 1 (which is contiguous-US only). They are filtered out at solve time via `WHERE state NOT IN ('AK','HI')`, not deleted.
+- **Alaska & Hawaii NPS units** were originally ingested but **excluded from the Tier 1 candidate set**. Hawaii stays excluded (no road). Alaska is **conditionally included** when a trip opts into `routing_network: us_canada` (see D5 follow-up above).
 - **Park-code dedup key**: NPS `parkCode` (e.g. `yell` for Yellowstone) is stable across API responses and is the natural upsert key for the `pois` table. Stored in `tags->>'park_code'`.

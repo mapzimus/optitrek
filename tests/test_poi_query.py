@@ -7,12 +7,46 @@ from src.config import TripConfig
 from src.poi_query import build_query, fetch_pois
 
 
-def test_minimal_query_excludes_ak_hi():
+def test_minimal_query_excludes_ak_hi_and_territories():
+    """Default config (routing_network='us'): AK is excluded because the
+    US-only OSRM engine can't route to it. HI + territories are excluded
+    unconditionally (no road)."""
     cfg = TripConfig(name="x")
     sql, params = build_query(cfg)
     assert "source = 'nps'" in sql
     assert "state <> ALL(%(excluded)s)" in sql
-    assert params["excluded"] == ["AK", "HI"]
+    # AK is contiguous-unreachable on the US-only engine; HI is an island;
+    # PR/VI/GU/MP/AS are US territories outside REQUIRED_STATES. All
+    # excluded to keep the Tier 2 candidate set aligned with the routable
+    # universe of the active OSRM engine.
+    assert set(params["excluded"]) == {"AK", "HI", "PR", "VI", "GU", "MP", "AS"}
+
+
+def test_us_canada_engine_drops_ak_from_exclusion():
+    """D5 follow-up: when routing_network='us_canada', AK is reachable via
+    the Alaska Highway (BC + Yukon). The NA OSRM engine has the Alcan in
+    its routable graph (verified Seattle→Anchorage = 2,363 mi / 51 h).
+    So AK comes OUT of the exclusion list and AK NPS units enter the
+    candidate pool. HI + territories stay excluded — they're road-
+    unreachable regardless of which engine is in use."""
+    cfg = TripConfig(name="x", routing_network="us_canada")
+    sql, params = build_query(cfg)
+    excluded = set(params["excluded"])
+    assert "AK" not in excluded, (
+        "AK should be reachable via the us_canada engine. Excluded list: "
+        f"{sorted(excluded)}"
+    )
+    # The rest of the exclusion list is unchanged
+    assert excluded == {"HI", "PR", "VI", "GU", "MP", "AS"}
+
+
+def test_us_engine_explicitly_keeps_ak_excluded():
+    """Explicit `routing_network='us'` (not just the default) still drops
+    AK. The exclusion key isn't 'engine is non-default' — it's 'engine
+    can't route there.' Pin that for symmetry with the us_canada test."""
+    cfg = TripConfig(name="x", routing_network="us")
+    sql, params = build_query(cfg)
+    assert "AK" in set(params["excluded"])
 
 
 def test_states_filter_adds_clause():
