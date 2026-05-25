@@ -122,6 +122,42 @@ Map extent for AK/HI-inclusive layouts: `(-2,800,000, -2,400,000, 2,800,000, 1,1
 
 Specifically: do NOT manipulate the layer tree via `removeChildNode` + `clone` + `addChildNode` to reorder layers. That destroys the underlying `QgsMapLayer` objects. Set ordering only on `map_item.setLayers([...])` — legend panel order is cosmetic.
 
+## Optional enhancements (proven 2026-05-24)
+
+### Direction arrows on tour lines
+
+Add `QgsMarkerLineSymbolLayer` with `filled_arrowhead` marker, `rotateSymbols=True`, placement `CentralPoint` (one arrow per unique edge) or `Interval` (arrows every ~80mm along shared edges). See `line_with_arrow()` in the reference file.
+
+**Critical**: OSRM fetches polylines in serialized-index order (edge `[3, 17]` is fetched 3→17), NOT in route traversal order. With `rotateSymbols=True`, arrows will point in arbitrary directions unless you re-orient the polylines first. Use `directed_coords()` from the reference file — it uses each tour's position map to flip polylines as needed, with a special case for the closing depot edge (pos N → pos 1).
+
+In our Olson vs Optitrek diff, this fix re-oriented **21 of 44 shared edges, 5 of 6 olson-only, 2 of 6 optitrek-only** — almost half were pointing wrong before the fix.
+
+### Hillshade base layer (terrain context)
+
+ESRI World Hillshade is free, no API key, reprojects from EPSG:3857 → Albers cleanly:
+
+```python
+hillshade_url = ("type=xyz&url=https://services.arcgisonline.com/arcgis/rest/"
+                 "services/Elevation/World_Hillshade/MapServer/tile/"
+                 "%7Bz%7D/%7By%7D/%7Bx%7D&zmax=15&zmin=0")
+hillshade = QgsRasterLayer(hillshade_url, "hillshade", "wms")
+project.addMapLayer(hillshade)
+# Put hillshade at the BOTTOM of map_item.setLayers([...])
+```
+
+**Critical**: state polygons obscure hillshade unless fill is fully transparent. Use `"color": "0,0,0,0"` (outline-only) and a slightly darker outline (`"60,60,60,255"`). At alpha 110 (43% opacity) the white state fill washes out the gray hillshade entirely.
+
+**Tile-cache warm-up**: print layout export may complete before XYZ tiles fetch. If hillshade is missing from a first-time export, warm the canvas first:
+```python
+canvas = iface.mapCanvas()
+canvas.setDestinationCrs(map_item.crs())
+canvas.setExtent(map_item.extent())
+canvas.setLayers([hillshade])
+canvas.refresh()
+QTimer.singleShot(8000, loop.quit); loop.exec_()  # 8s wait for tiles
+# Now restore full layer set and export
+```
+
 ## QGIS MCP v0.3.x gotchas
 
 | Symptom | Fix |
@@ -132,6 +168,16 @@ Specifically: do NOT manipulate the layer tree via `removeChildNode` + `clone` +
 | `QFont(family, float)` crashes | `QFont(family); f.setPointSizeF(size)` |
 | TIGER state polys claim Great Lakes water | Overlay Natural Earth lakes (`D:\tmp\ne_lakes\ne_10m_lakes.shp`) |
 | 1 stray PR point in `pois.parquet` | Filter `state == "PR"` explicitly (matrix_builder's `EXCLUDED_STATES` doesn't include territories) — only an issue for Path A or C, not Path B (which uses filtered POIs) |
+
+## Label placement gotchas (PAL labeling engine)
+
+These came out of placing region annotations ("Midwest reroute", "Southeast reroute") on the Olson diff. They generalize to any text that has to be readable over a busy map.
+
+**`OverPoint` clips at map edges** — `OverPoint` placement anchors the label's CENTER on the feature point and extends the text symmetrically left/right. A 50mm-wide subtitle centered on a point within ~25mm of the map item's right/left edge will have its outer half clipped off-canvas. Prefer `AroundPoint` with `quadOffset` set to a specific quadrant (e.g. `QuadrantPosition.QuadrantAbove`) for labels near edges — the anchor moves to a corner so the text grows toward the map interior. Same pattern works for labels you specifically want to sit above/below a point (depot's "START" label).
+
+**Use `QgsTextBackgroundSettings.ShapeRectangle` for must-be-readable callouts.** White halo (text buffer) becomes hard to read over busy backgrounds like hillshade or thick lines. A solid white "chip" with a thin dark border (`stroke_width = 0.3mm`, `fill_color = (255,255,255,245)`, `size_type = SizeBuffer` with 2.0×1.5mm padding) gives crisp legibility regardless of what's underneath. Standard pattern for region annotations, scale bar labels, north arrow text.
+
+**PAL silently suppresses overlapping labels.** If a label collides with another label OR with an obstacle layer, the labeler drops it (no error). For labels that MUST render (depot label, region callouts), set `apal.displayAll = True` and bump `apal.priority` (default 5, max 10). If those still don't render, check that the feature's geometry is inside the map item's extent — features outside the visible area are skipped without warning.
 
 ## OSRM gotchas
 

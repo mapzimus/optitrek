@@ -97,18 +97,62 @@ stops.dataProvider().addFeatures(sf); stops.updateExtents()
 project.addMapLayer(stops)
 
 # 3. Three line layers (one per edge category)
+#
+# IMPORTANT — polyline orientation matters for direction arrows!
+# OSRM fetches polylines in the order of the edge endpoints as serialized
+# (e.g. edge [3, 17] is fetched 3->17). That has NOTHING to do with the
+# route's actual traversal direction. If you add direction arrows via
+# QgsMarkerLineSymbolLayer with rotateSymbols=True, arrows will point in
+# arbitrary directions unless you reorient the polylines first.
+#
+# Fix: build per-tour position maps (stop_index -> visit_position) and use
+# them to determine traversal direction per edge. Special case: the closing
+# edge from last stop back to depot has decreasing position; detect and
+# preserve.
 fc = json.loads(open(POLYLINES_GEOJSON).read())
+pos_a = {s["index"]: s["olson_pos"]    for s in data["stops"]}  # rename per-dump
+pos_b = {s["index"]: s["optitrek_pos"] for s in data["stops"]}
+N_STOPS = len(data["stops"])
+
+def directed_coords(coords, from_idx, to_idx, pos_map):
+    """Reorient polyline coords to match the route's traversal direction.
+    Returns coords (possibly reversed) so arrows along the line will point
+    in the direction the route is actually driven."""
+    pos_from, pos_to = pos_map[from_idx], pos_map[to_idx]
+    # Closing edge connects depot (pos=1) and last stop (pos=N); traverse N->1
+    is_closing = ({pos_from, pos_to} == {1, N_STOPS})
+    if is_closing:
+        return coords if pos_from == N_STOPS else list(reversed(coords))
+    # Normal edge: traversal goes lower pos -> higher pos
+    return coords if pos_from < pos_to else list(reversed(coords))
+
+CATEGORY_POS_MAPS = {
+    CATEGORY_SHARED:  pos_a,   # shared edges align in both tours (after alignment)
+    CATEGORY_A_KEY:   pos_a,
+    CATEGORY_B_KEY:   pos_b,
+}
+
 def make_lines(name, category):
     lyr = QgsVectorLayer("LineString?crs=EPSG:2163", name, "memory")
-    lyr.dataProvider().addAttributes([QgsField("miles", QVariant.Double)])
+    lyr.dataProvider().addAttributes([
+        QgsField("miles",    QVariant.Double),
+        QgsField("from_idx", QVariant.Int),
+        QgsField("to_idx",   QVariant.Int),
+    ])
     lyr.updateFields()
+    pos_map = CATEGORY_POS_MAPS[category]
     feats = []
     for feat in fc["features"]:
         if feat["properties"]["category"] != category: continue
-        pts = [QgsPointXY(lon, lat) for lon, lat in feat["geometry"]["coordinates"]]
+        p = feat["properties"]
+        coords = directed_coords(feat["geometry"]["coordinates"],
+                                  p["from_idx"], p["to_idx"], pos_map)
+        pts = [QgsPointXY(lon, lat) for lon, lat in coords]
         g = QgsGeometry.fromPolylineXY(pts); g.transform(to_albers)
         nf = QgsFeature(lyr.fields()); nf.setGeometry(g)
-        nf.setAttribute("miles", feat["properties"].get("miles", 0))
+        nf.setAttribute("miles",    p.get("miles", 0))
+        nf.setAttribute("from_idx", p["from_idx"])
+        nf.setAttribute("to_idx",   p["to_idx"])
         feats.append(nf)
     lyr.dataProvider().addFeatures(feats); lyr.updateExtents()
     return lyr, len(feats)
