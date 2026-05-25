@@ -10,3 +10,16 @@
 # in the repo (and in diffs, just collapsed by default) but excludes
 # them from the language stats.
 gallery/*.html linguist-generated=true
+
+# Force LF line endings for shell scripts. The repo has `core.autocrlf=true`
+# locally on BRONTOSAURUS, which converts LF→CRLF on Windows checkout. Bash
+# under WSL Ubuntu can't execute a script with `#!/usr/bin/env bash\r` —
+# `env: 'bash\r': Permission denied` is the symptom (exit code 126). Triggered
+# during the 2026-05-24 ferry rollback when a fresh `git checkout` of the
+# filter scripts re-CRLF'd them and broke the rebuild.
+#
+# Python doesn't care about line endings (the parser strips \r), but it's
+# good hygiene and avoids surprises in test_data files or shebang-driven
+# scripts.
+*.sh text eol=lf
+*.py text eol=lf
