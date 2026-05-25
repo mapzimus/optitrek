@@ -23,7 +23,7 @@ All Python commands assume the project venv. There are TWO venvs depending on ho
   environment quirks" below)
 
 ```bash
-# Tests (no DB or OSRM needed; 17 tests should pass in ~25s)
+# Tests (no DB or OSRM needed; 121 tests should pass in ~2.5 min)
 python -m pytest tests/ -q
 python -m pytest tests/test_solver.py -v          # single file
 python -m pytest tests/test_solver.py::test_capped_visits_all_states  # single test
@@ -224,6 +224,93 @@ Tier 1 entry point (`scripts/run_tier1.py`) is untouched and still
 works. Tier 2 reproduces it exactly via `trips/tier1_replica.yaml`
 (see `scripts/run_oracle.sh` for the OSRM lifecycle).
 
+## Time-budgeted solver mode (Tier 2 headline)
+
+Two solver MODES live in `src/solver.py:solve_with_config()`:
+
+- **State-coverage** (default): visit ≥1 POI per state in `config.states`,
+  minimize total travel time. The "Tier 1 with filters" semantic.
+- **Time-budgeted**: activated when `config.total_trip_days is not None`.
+  Switches to score-maximization-within-soft-budget. Each POI has a value:
+  ```
+  poi_priority[poi.id]           # explicit per-POI value
+   ?? category_priority[category] # category fallback
+   ?? 0                           # incidental (visited only as waypoint)
+  ```
+  Budget = `total_trip_days × max_hours_per_day × 3600` seconds. Cap is
+  SOFT — each hour over budget costs `time_budget_overage_penalty`
+  priority points, so the solver can exceed the budget if a high-value
+  POI sits just past the line.
+
+When time-budgeted mode is on, `states` becomes a geographic FILTER only
+(at fetch time, via SQL) — it no longer enforces coverage. `must_include`
+still hard-forces specific POIs. `loop=False` still trims the closing
+leg from `total_cost`.
+
+**Crucial unit convention** (`PRIORITY_TO_DRIVE_HOUR = 3600 * cost_scale`):
+1 priority point ≡ 1 hour of driving's worth of solver cost. So
+`category_priority.national_park: 10` reads naturally as "I'd drive 10 h
+round-trip to visit a National Park." An earlier version had the wrong
+unit math (skip_penalty = value × cost_scale, forgetting the
+seconds-per-hour factor) and was caught by
+`test_time_budgeted_visits_high_value_when_budget_loose` — solver was
+visiting nothing because skip penalty was 360× too cheap relative to
+drive cost. The PRIORITY_TO_DRIVE_HOUR constant in `_solve_time_budgeted`
+documents the conversion explicitly.
+
+Example: `trips/southwest_7day_budget.yaml` — 7-day SW parks loop with
+category_priority + a Grand Canyon poi_priority override.
+
+## Web frontend (Stage 1, local-dev only)
+
+FastAPI + Jinja2 + htmx + Tailwind CDN. Structured form covering every
+TripConfig field, sync solve, real-time POI autocomplete from Neon.
+Launch with `./scripts/run_web.sh` (binds 0.0.0.0:8000 by default; pass
+`OPTITREK_WEB_PORT=8765` if you have a port collision on Windows — WSL2
+silently no-ops port forwarding when Windows already owns the port).
+
+```
+src/web/
+├── main.py              FastAPI app: 4 routes + /maps static mount
+├── form_parser.py       form-dict → TripConfig (handles nested keys for
+│                        category_priority[<cat>] and the poi_priority
+│                        textarea, soft-warns on malformed lines)
+└── templates/
+    ├── base.html        Tailwind CDN + htmx layout
+    ├── index.html       6-section form (basics, filters, must_include,
+    │                    daily, routing, time-budgeted)
+    ├── result.html      iframe-embedded Folium map + download link
+    ├── error.html       friendly error page (no stack traces)
+    └── partials/poi_search_results.html  htmx-driven autocomplete rows
+```
+
+Routes:
+- `GET /` — form (categories populated from DB)
+- `POST /solve` — parse + validate + run_trip + return result page
+- `GET /api/categories` — JSON variant for dropdown re-renders
+- `GET /api/poi-search?q=…` — HTML partial for htmx autocomplete
+- `GET /maps/{file}` — static mount serving rendered Folium HTMLs
+
+**Error handling:** three branches in `/solve` — `TripConfigError` → 400,
+`OSRMEngineError` → 503 with "docker start optitrek-osrm-..." hint,
+other exceptions → 500 with traceback (Stage 1 is local-dev; Stage 3
+would route to a monitoring sink).
+
+**Watch out for the Starlette template-API change.** With Starlette ≥0.34,
+the old `templates.TemplateResponse(name, {"request": request, ...})`
+form silently trips Jinja's autoescape cache with an unhashable tuple
+key — confusing TypeError. The new positional form
+`templates.TemplateResponse(request, name, context)` is the only safe
+shape. All seven call sites in `main.py` use the new positional form.
+
+**Known UX issue:** the form exposes every TripConfig field directly,
+which feels redundant in places (e.g., `states` does different things
+depending on whether `total_trip_days` is set). User feedback was
+"hard to use, redundant, confusing." Stage 2 (async + email) and
+Stage 3 (deploy) are planned; UX polish is deferred. The codebase's
+*real* interface is the YAML config — the web form is a clumsy
+generator for it.
+
 ## Cross-border routing (D5, opt-in)
 
 D3 picks US-only OSRM as the default. D5 adds an opt-in US+Canada engine for trips
@@ -288,6 +375,41 @@ cd /mnt/e/dev/optitrek
 Both routes are drawn as toggleable Folium FeatureGroups with distinct colors
 (US-only blue, US+Canada red). The banner shows total hours / miles / stops for
 each plus the delta saved by cross-border routing.
+
+### Alaska — conditionally reachable (D5 follow-up, 2026-05-25)
+
+D3 excluded AK from the candidate pool because the US-only OSRM extract can't
+route to it. With D5's US+Canada engine, the Alaska Highway through BC + Yukon
+is in the routable graph. Verified empirically: Seattle→Anchorage on `:5001`
+returns 2,363 mi / 51 h, accurate for the actual Alcan drive.
+
+`src/poi_query.py:_excluded_states_for_config()` resolves the SQL exclusion
+list per-trip:
+- `routing_network='us'` (default) → exclude `["AK", "HI", "PR", "VI", "GU", "MP", "AS"]` (437 candidate POIs)
+- `routing_network='us_canada'` → exclude `["HI", "PR", "VI", "GU", "MP", "AS"]` (456 candidate POIs, +19 from AK)
+
+Tier 1's `matrix_builder.EXCLUDED_STATES = {"AK", "HI"}` stays unconditional —
+Tier 1 always runs on the US-only engine. The conditional logic lives only in
+Tier 2's `poi_query`. Run `python -m scripts.probe_ak_optin` to verify the
+two candidate counts live against Neon.
+
+### KNOWN GAP: ferries (route=ferry) are filtered out of the PBF
+
+`scripts/filter_pbf.sh:51` only keeps `w/highway=...` ways. Ferry routes in OSM
+are tagged `route=ferry` with no `highway` value, so `osmium tags-filter` strips
+them before OSRM ever sees them. Empirical evidence: the current US engine
+routes Seattle→Bainbridge as 92 mi / 127 min (driving around via Tacoma) when
+the actual Washington State Ferry is 12 mi / 35 min.
+
+**Impact:** Puget Sound, CT↔Long Island Cross Sound, Lake Champlain, Cape Cod,
+and the **Alaska Marine Highway** (which is a US Interstate Highway designation,
+Bellingham WA → Whittier AK) all currently invisible to the solver.
+
+**Pending fix:** add `w/route=ferry` to the filter, rebuild both engines
+(~1-2 h wall-clock for `us-major` + `north-america-major`), capture a new Tier 1
+oracle baseline (the 9,744 mi number will shift down — some legs get shorter,
+some previously-unreachable POIs like Isle Royale NP and Cumberland Island NS
+come into scope). Tracked in `BUILD_STATUS.md`.
 
 ## Tier 1 status
 
