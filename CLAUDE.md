@@ -393,7 +393,7 @@ Tier 1 always runs on the US-only engine. The conditional logic lives only in
 Tier 2's `poi_query`. Run `python -m scripts.probe_ak_optin` to verify the
 two candidate counts live against Neon.
 
-### KNOWN GAP: ferries — investigated 2026-05-24, deeper than the filter
+### KNOWN GAP: ferries — investigated 2026-05-24 & 2026-05-25, deeper than the filter
 
 OSRM's graph cannot route over most car-carrying ferries. Empirical: current
 US engine routes Seattle→Bainbridge as 92 mi / 127 min (driving around via
@@ -434,20 +434,43 @@ exactly that and the result was only a *partial* fix; rolled back per
    but Cross Sound is already a way (not a relation), and Lake Champlain
    has neither.
 
-**Concrete next steps for a future attempt** (none verified):
+**2026-05-25 follow-up — broaden-filter is empirically not viable:**
 
-- **Broaden the road filter** to also keep `highway=service` (and maybe
-   `unclassified`/`residential`). Likely doubles PBF size + OSRM RAM —
-   re-engages the `brontosaurus-osrm-memory-ceiling` concern at the
-   24 GB WSL cap.
+Tried option 1 from the previous next-steps list (add `highway=service`
+to keep ferry-terminal connectors). Result: **OSRM extract OOM-killed
+mid-run** on BRONTOSAURUS's 24 GB WSL cap. Empirical data:
+
+- PBF size: 548 MB (major-only) → **1.7 GB** (3.1×) after adding `service`.
+- Extract reached "Generating edge-expanded graph representation" then
+  died silently around the "Edge compression ratio" step. Log stops
+  cleanly mid-pipeline; no Killed/OOM message because the OS killer
+  doesn't print to the container's stdout — only the missing artifacts
+  betray it. After ~13 min of extract, no `.osrm.geometry`/`.osrm.edges`/
+  `.osrm.fileIndex` ever got written.
+- Process inventory after crash: only the early-extract sentinels
+  (`us-major.osrm.{names,properties,timestamp}` — 15 MB total) survived.
+- Reproducible — this is hypothesis 1 *confirmed* against the
+  `brontosaurus-osrm-memory-ceiling` memory ceiling. Raising the
+  `.wslconfig` cap above 24 GB risks re-triggering the 2026-05-21 BSOD.
+
+**Updated next-step list** (broaden-filter removed; would require
+hardware change to retry):
+
 - **Surgical terminal preservation** — pre-enumerate every
-   `amenity=ferry_terminal` node, preserve all ways within ~500 m via
-   `osmium extract --polygon`. More complex pipeline but keeps PBF
-   manageable.
+   `amenity=ferry_terminal` node, then preserve all ways within ~500 m
+   via `osmium extract --polygon` before the major-roads filter.
+   Pipeline complexity goes up but PBF stays small. Most promising
+   on-machine option.
 - **Try a different engine** (Valhalla, GraphHopper) — may handle
-   ferry-road snapping without filter changes. Significant porting work.
+   ferry-road snapping without filter changes. Significant porting work
+   but moves us off the memory ceiling.
+- **Build on different hardware** — e.g. spin up a `e2-highmem-8` (64 GB)
+   GCP VM, build artifacts there, transfer to local. Reverses the
+   2026-05-21 migration. Adds operational complexity and ~$0.40/hr while
+   the VM exists.
 - **Won't-fix** — Tier 1 doesn't visit any island-only park; the
-   optimizer cost of unreachable ferries is small. Document and move on.
+   optimizer cost of unreachable ferries is small (see
+   `diagnostics_unreachable_pois.md`). Document and move on.
 
 Canonical probe legs (all currently route around — drive distances /
 durations were captured 2026-05-24, recorded in commit logs):
