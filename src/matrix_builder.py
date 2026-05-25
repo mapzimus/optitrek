@@ -43,9 +43,13 @@ DEFAULT_OSRM_URL = "http://localhost:5000"
 DEFAULT_BATCH = 100
 DEFAULT_TIMEOUT = 60
 
-# Exclude AK and HI from the Tier 1 solver candidate set per DECISIONS.md
-# (non-contiguous, US-only OSRM extract can't route to them anyway).
-EXCLUDED_STATES = {"AK", "HI"}
+# Exclude AK, HI, and all US territories from the Tier 1 solver candidate
+# set per DECISIONS.md (non-contiguous; US-only OSRM extract can't route to
+# them anyway). Territories are listed defensively — only PR currently has
+# an NPS unit in the catalog, but VI/GU/MP/AS could appear in future pulls
+# and would silently waste OSRM /table calls + sit as phantom nodes in the
+# solver search space (they're not in REQUIRED_STATES in src/run_tier1.py).
+EXCLUDED_STATES = {"AK", "HI", "PR", "VI", "GU", "MP", "AS"}
 
 
 def _osrm_url() -> str:
