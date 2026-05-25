@@ -393,23 +393,71 @@ Tier 1 always runs on the US-only engine. The conditional logic lives only in
 Tier 2's `poi_query`. Run `python -m scripts.probe_ak_optin` to verify the
 two candidate counts live against Neon.
 
-### KNOWN GAP: ferries (route=ferry) are filtered out of the PBF
+### KNOWN GAP: ferries — investigated 2026-05-24, deeper than the filter
 
-`scripts/filter_pbf.sh:51` only keeps `w/highway=...` ways. Ferry routes in OSM
-are tagged `route=ferry` with no `highway` value, so `osmium tags-filter` strips
-them before OSRM ever sees them. Empirical evidence: the current US engine
-routes Seattle→Bainbridge as 92 mi / 127 min (driving around via Tacoma) when
-the actual Washington State Ferry is 12 mi / 35 min.
+OSRM's graph cannot route over most car-carrying ferries. Empirical: current
+US engine routes Seattle→Bainbridge as 92 mi / 127 min (driving around via
+Tacoma) when the actual Washington State Ferry is 12 mi / 35 min. Same hit
+on CT↔Long Island Cross Sound, Lake Champlain, Cape Cod, and the Alaska
+Marine Highway (Bellingham → Whittier).
 
-**Impact:** Puget Sound, CT↔Long Island Cross Sound, Lake Champlain, Cape Cod,
-and the **Alaska Marine Highway** (which is a US Interstate Highway designation,
-Bellingham WA → Whittier AK) all currently invisible to the solver.
+**The original gap framing was wrong** — it claimed adding `w/route=ferry`
+to `scripts/filter_pbf.sh:51` would fix it. The 2026-05-24 attempt did
+exactly that and the result was only a *partial* fix; rolled back per
+"no partial fixes" policy. Don't repeat that false start. Findings:
 
-**Pending fix:** add `w/route=ferry` to the filter, rebuild both engines
-(~1-2 h wall-clock for `us-major` + `north-america-major`), capture a new Tier 1
-oracle baseline (the 9,744 mi number will shift down — some legs get shorter,
-some previously-unreachable POIs like Isle Royale NP and Cumberland Island NS
-come into scope). Tracked in `BUILD_STATUS.md`.
+1. **The filter edit works at the filter layer.** Adding `w/route=ferry`
+   to both `filter_pbf.sh` and `build_na_osrm.sh`'s inline filter brought
+   890 ferry ways into the rebuilt US PBF (vs 0 before). Verified via
+   `osmium tags-filter w/route=ferry` against the rebuilt artifact.
+2. **WSF routes correctly** with the edit — Seattle→Bainbridge dropped to
+   8.9 mi / 39 min. So the filter does enable some ferries.
+3. **Cross Sound + Lake Champlain + AMHS still drive around** with the
+   edit. Root cause is NOT the filter — it's the OSRM graph build.
+4. **Cross Sound Ferry IS already in the filtered PBF** as way `w54689694`
+   (named "Bridgeport, CT - Port Jefferson, NY", `route=ferry`,
+   `motor_vehicle=yes`). Verified via `osmium getid` against the rebuilt
+   `us-major.osm.pbf`. So the filter caught it, but OSRM doesn't route
+   over it — `/route?steps=true` surfaces a "Ferry Access Road" step
+   (0.1 mi) for the road approach but no ferry edge in the route.
+5. **Likely cause:** Cross Sound's terminal nodes connect to the rest of
+   the road network only via `highway=service`/`residential` ways, which
+   our major-roads filter strips. The ferry survives but becomes a
+   disconnected component in the graph. WSF works because WSF *relations*
+   include `platform` ways (the dock piers) that share nodes with
+   highway ways that DO survive the filter.
+6. **Lake Champlain has NO `route=ferry` way OR relation in OSM** in the
+   `(-73.5,44.0)-(-73.0,45.0)` bbox. Separate data-quality gap; not
+   fixable at our layer.
+7. **Adding `r/route=ferry` to the filter would not help.** Diagnostic
+   confirmed: 193 ferry relations exist in source `us-latest.osm.pbf`,
+   but Cross Sound is already a way (not a relation), and Lake Champlain
+   has neither.
+
+**Concrete next steps for a future attempt** (none verified):
+
+- **Broaden the road filter** to also keep `highway=service` (and maybe
+   `unclassified`/`residential`). Likely doubles PBF size + OSRM RAM —
+   re-engages the `brontosaurus-osrm-memory-ceiling` concern at the
+   24 GB WSL cap.
+- **Surgical terminal preservation** — pre-enumerate every
+   `amenity=ferry_terminal` node, preserve all ways within ~500 m via
+   `osmium extract --polygon`. More complex pipeline but keeps PBF
+   manageable.
+- **Try a different engine** (Valhalla, GraphHopper) — may handle
+   ferry-road snapping without filter changes. Significant porting work.
+- **Won't-fix** — Tier 1 doesn't visit any island-only park; the
+   optimizer cost of unreachable ferries is small. Document and move on.
+
+Canonical probe legs (all currently route around — drive distances /
+durations were captured 2026-05-24, recorded in commit logs):
+
+| Leg | Current routing | What a ferry-aware engine should give |
+|---|---|---|
+| Seattle Ferry Term → Bainbridge | 92.1 mi / 126.6 min | ~12 mi / ~35-45 min |
+| Bridgeport CT → Port Jefferson NY | 99.1 mi / 137.5 min | ~15 mi / ~75-90 min |
+| Burlington VT → Port Kent NY | 96.0 mi / 123.1 min | ~15 mi / ~45-60 min |
+| Bellingham WA → Whittier AK (NA :5001) | 2,334 mi / 50.6 h | varies (ferry vs Alcan) |
 
 ## Tier 1 status
 
