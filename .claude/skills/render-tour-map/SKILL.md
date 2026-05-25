@@ -168,6 +168,31 @@ QTimer.singleShot(8000, loop.quit); loop.exec_()  # 8s wait for tiles
 | `QFont(family, float)` crashes | `QFont(family); f.setPointSizeF(size)` |
 | TIGER state polys claim Great Lakes water | Overlay Natural Earth lakes (`D:\tmp\ne_lakes\ne_10m_lakes.shp`) |
 | 1 stray PR point in `pois.parquet` | Filter `state == "PR"` explicitly (matrix_builder's `EXCLUDED_STATES` doesn't include territories) — only an issue for Path A or C, not Path B (which uses filtered POIs) |
+| Map renders BLANK with only chrome visible | **CRS mismatch.** Project CRS got reset to EPSG:4326 (default) but data is in EPSG:2163 (Albers). Map item inherits project CRS unless explicitly set. Fix: ALWAYS call `project.setCrs(ALBERS)` AND `map_item.setCrs(ALBERS)` explicitly. Both. |
+| Map item only shows tiny cluster of features at center, mostly blank | Same CRS mismatch — features rendering at Albers coordinates interpreted as degrees, all collapsing to a tiny area near (0,0) in whatever unit system the map is in. Fix same as above. |
+| Project state lost when QGIS closes | Memory-provider layers don't persist. Save project as `.qgz` (`File → Save As`). The .qgz embeds memory layers as GeoPackages. Reload to restore everything. |
+
+## Full-bleed composition (the v13 pattern)
+
+The "map fills entire canvas, chrome overlays on translucent panels" composition that finally worked for the Olson diff:
+
+1. **Map item = full page**: `map_item.attemptMove(QgsLayoutPoint(0, 0, MM))` and `attemptResize(QgsLayoutSize(420, 297, MM))`. Disable frame: `setFrameEnabled(False)`.
+2. **Expand extent to page aspect**: compute route data bbox, then extend vertically (or horizontally) so the extent aspect matches the page aspect. This fills the page with map data + padding (oceans north/south).
+3. **All chrome overlays sit ON the map** with translucent backgrounds:
+   - `QgsLayoutItemShape` rectangles with fill `QColor(252,250,244,222)` (87% opaque cream) and a thin `QColor(110,100,85,200)` border
+   - Title/subtitle/stats/legend/scale/N-arrow placed in OCEAN AREAS of the map (Pacific corner, Gulf, Atlantic offshore — where the route doesn't go)
+4. **Critical CRS-pin** (see gotcha above): explicitly set `project.setCrs(ALBERS)` AND `map_item.setCrs(ALBERS)`.
+
+## Ocean rendering recipe
+
+For a real "land vs water" map (vs the blank-page-with-routes look):
+
+1. Download `ne_10m_ocean.shp` from naciscdn.org (~7MB)
+2. Add as layer with opaque blue fill: `"color": "175,206,227,255"`, no outline
+3. Place oceans at the BOTTOM of the map item layer stack — drawn first, covered by states
+4. States layer: opaque cream fill `"color": "248,244,234,255"` + warm-gray outline `"color": "140,130,110,200"`, width 0.18mm — covers ocean on land
+5. Hillshade: set blend mode to multiply (`hillshade.setBlendMode(QPainter.CompositionMode_Multiply)`) and opacity 0.65 — darkens both land (terrain) and ocean (subtle bathymetry feel)
+6. Layer stack (top→bottom): depot, stops, routes, cities, lakes, **hillshade (multiply)**, urban, roads, states, oceans
 
 ## Label placement gotchas (PAL labeling engine)
 
