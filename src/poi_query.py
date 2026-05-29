@@ -32,9 +32,12 @@ from src.db import get_conn
 #     NaN everywhere between AK POIs and the rest of the continent,
 #     so AK POIs are filtered out at fetch time.
 #
-# Tier 1's matrix_builder.EXCLUDED_STATES stays {"AK", "HI"}
-# unconditionally because Tier 1 always runs on the US-only engine
-# (D3); the conditional logic only matters at the Tier 2 fetch layer.
+# Tier 1's matrix_builder.EXCLUDED_STATES stays unconditional —
+# {"AK", "HI", "PR", "VI", "GU", "MP", "AS"} — because Tier 1 always
+# runs on the US-only engine (D3). Territories were added defensively
+# in commit 56865ef (only PR currently has an NPS unit, but VI/GU/MP/AS
+# could appear in future pulls). The conditional AK opt-in logic
+# below only matters at the Tier 2 fetch layer.
 _ALWAYS_EXCLUDED = ["HI", "PR", "VI", "GU", "MP", "AS"]
 _AK_REQUIRES_NA_ENGINE = "AK"
 _METERS_PER_MILE = 1609.344

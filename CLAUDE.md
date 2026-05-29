@@ -162,12 +162,40 @@ Phase 4: SolveResult + OSRM /route ──► Folium HTML
   Folium HTML with both US-only and US+Canada routes as toggleable FeatureGroups. The
   wrapper ensures both engines are up, activates the venv, and runs the Python renderer.
   Engines are left running after exit for fast re-runs.
+- `scripts/run_trip.py` — **Tier 2 CLI entrypoint.** argparse front-end over
+  `src.trip.run_trip()`. Flags: `--dry-run`, `--time-limit-override N`, `--output-dir`,
+  `--verbose`. Take any YAML in `trips/` as positional arg.
+- `scripts/run_oracle.sh` — wraps `python -m scripts.test_tier1_replica` with the OSRM
+  container lifecycle (start, wait-for-ready, run, stop). Used for the ±0.5% drift check.
+- `scripts/test_tier1_replica.py` — Tier 1 oracle. Loads cached parquet matrices and the
+  capped solver result; asserts hours/miles drift ≤ 0.5% from `TIER1_HOURS=193.0` /
+  `TIER1_MILES=9744.0`. NOT a pytest — it's a standalone diagnostic. Run from WSL Ubuntu.
+- `scripts/probe_ak_optin.py` — live-DB diagnostic for D5 AK opt-in. Verifies the two
+  candidate counts (`'us'` → 437 / 0 AK; `'us_canada'` → 456 / 19 AK).
+- `scripts/diagnose_unreachable_pois.py` — Gap-10 follow-up. Loads `data/matrix/`,
+  surfaces POIs with >10% unreachable pairs (currently 79: 35 very-remote, 44 remote),
+  writes `diagnostics_unreachable_pois.md` at repo root. Read-only, no DB/OSRM deps.
+- `scripts/run_web.sh` — launches the FastAPI form (Stage 1; `src/web/`). Binds
+  `0.0.0.0:8000` by default; override with `OPTITREK_WEB_PORT`. UX is known clumsy —
+  the YAML config is the real interface.
+- **Olson-comparison + viz support** — `scripts/olson_route_diff.py` (edge-by-edge diff
+  → `gallery/08_olson_route_diff_report.md`), `scripts/dump_tier1_tour.py` +
+  `scripts/dump_olson_vs_optitrek_edges.py` (tour-dump utilities for the QGIS project
+  at `data/qgis_projects/`), `scripts/fetch_tour_polylines.py` +
+  `scripts/fetch_diff_polylines.py` + their `_wsl.sh` wrappers (OSRM polyline fetchers
+  for the static Albers maps), `scripts/new_england_concord.py` (one-off New England
+  trip generator).
+- **Gallery rendering wrappers** — `scripts/render_overlays.sh`,
+  `scripts/render_california.sh`, `scripts/render_new_gallery_trips.sh` — shell wrappers
+  that start OSRM, run the relevant Python renderer, and stop the container.
+- `scripts/test_border_routing.sh` — quick D5 sanity test for border-crossing penalty.
 
 ### Decisions and gaps
 
-`DECISIONS.md` holds the four locked Tier 1 decisions (D1–D4). The deeper 19-decision log
-is `07-OPTITREK-DECISION-LOG.md`. Known scope gaps and their resolutions are
-`08-OPTITREK-GAP-AUDIT.md`.
+`DECISIONS.md` holds the locked decisions: D1–D4 for Tier 1 plus D5 (Tier 2 cross-border
+routing, with two follow-ups: customs-time penalty and AK conditional opt-in). The deeper
+19-decision log is `07-OPTITREK-DECISION-LOG.md`. Known scope gaps and their resolutions
+are `08-OPTITREK-GAP-AUDIT.md`.
 
 ## Known environment quirks (BRONTOSAURUS, 2026-05-21)
 
@@ -194,8 +222,9 @@ is `07-OPTITREK-DECISION-LOG.md`. Known scope gaps and their resolutions are
 - **Branch:** all work on `main`; this is a solo project on a personal GitHub
   (`github.com/mapzimus/optitrek`). The C:\ tree at `C:\Users\mhowe\Desktop\optitrek\` is
   a stale pre-migration copy with `.claude/worktrees/...` — the authoritative repo is at
-  `E:\dev\optitrek\` (`main` branch). The C:\ tree can be deleted after closing this
-  Claude session.
+  `E:\dev\optitrek\` (`main` branch). The C:\ tree can be deleted any time; it's still
+  around as of 2026-05-25 because Claude Code sessions launch from it. Always commit and
+  read code from `E:\dev\optitrek\`.
 - **Tests are colocated by phase**, not by file structure: `test_data_pull.py` pins the
   NPS API contract, `test_solver.py` includes a hand-crafted shortcut-insertion case that
   proves uncapped > capped when the data supports it, `test_visualize_smoke.py` is a
@@ -388,10 +417,13 @@ list per-trip:
 - `routing_network='us'` (default) → exclude `["AK", "HI", "PR", "VI", "GU", "MP", "AS"]` (437 candidate POIs)
 - `routing_network='us_canada'` → exclude `["HI", "PR", "VI", "GU", "MP", "AS"]` (456 candidate POIs, +19 from AK)
 
-Tier 1's `matrix_builder.EXCLUDED_STATES = {"AK", "HI"}` stays unconditional —
-Tier 1 always runs on the US-only engine. The conditional logic lives only in
-Tier 2's `poi_query`. Run `python -m scripts.probe_ak_optin` to verify the
-two candidate counts live against Neon.
+Tier 1's `matrix_builder.EXCLUDED_STATES = {"AK", "HI", "PR", "VI", "GU", "MP", "AS"}`
+stays unconditional — Tier 1 always runs on the US-only engine, and territories were
+added defensively (PR has an NPS unit; VI/GU/MP/AS could appear in future pulls and
+would silently waste OSRM `/table` calls or leak phantom nodes into the solver search
+space — they're not in `REQUIRED_STATES`). The conditional AK-opt-in logic lives only
+in Tier 2's `poi_query._excluded_states_for_config()`. Run
+`python -m scripts.probe_ak_optin` to verify the two candidate counts live against Neon.
 
 ### KNOWN GAP: ferries — investigated 2026-05-24 & 2026-05-25, deeper than the filter
 

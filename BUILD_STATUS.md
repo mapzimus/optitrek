@@ -1,6 +1,58 @@
 # OSRM US Build — Status Snapshot
 
-**Last updated:** 2026-05-23 — Tier 2 Phase 2 (cross-border routing) complete
+**Last updated:** 2026-05-25 — doc sync + ferry investigation closed (won't-fix-without-hardware)
+
+## Current snapshot (2026-05-25)
+
+- **Tier 1 oracle:** 193.0 h / 9,744 mi, 49 stops. Stable. Verified via
+  `scripts/test_tier1_replica.py` within ±0.5% tolerance.
+- **Tests:** 121 passing (`pytest tests/ -q` from WSL venv, ~2:30 wall-clock).
+- **OSRM containers:** both up locally — `optitrek-osrm-major` (`:5000`,
+  US-only major-roads) and `optitrek-osrm-na` (`:5001`, US+Canada major-roads).
+- **Working tree:** clean except `logs/` (untracked, intentional).
+
+### Recent commits since 2026-05-23 (this section's old "complete" date)
+
+| Commit | Summary |
+|---|---|
+| `810ae26 feat(tier2)` | Time-budgeted solver mode (Tier 2 headline feature) |
+| `67c6ab6 feat(web)` | Stage 1 FastAPI form for TripConfig — UX known clumsy |
+| `8a9aada feat(viz)` | Static Albers map renderer for tour comparisons |
+| `77e8d76 docs(skills)` | Render-tour-map skill notes |
+| `c9d51df feat(routing)` | Conditional AK opt-in (D5 follow-up #2) |
+| `94e7209 docs(claude)` | Web app + time-budgeted + AK opt-in + (stale) ferry-gap framing |
+| `56865ef fix(tier1)` | Exclude US territories from candidate set + contract tests |
+| `8779a97 docs` | Olson route-diff analysis + gallery overlay PNGs |
+| `ce2c811 docs(claude)` | KNOWN GAP ferries — 2026-05-24 investigation (no fix landed) |
+| `ebeb959 chore` | Lock `*.sh` and `*.py` to LF in `.gitattributes` |
+| `a2d98bd feat(viz)` | Full-bleed Olson diff map + QGIS project v13 |
+| `7c5f301 feat(diagnostics)` | Per-POI unreachability analysis + snapshot report (79 POIs) |
+| `f7043d5 docs(claude)` | KNOWN GAP ferries — 2026-05-25 OOM finding (broaden-filter not viable) |
+| (this commit) `docs(sync)` | Reconcile docs vs code: EXCLUDED_STATES, D-list, repo layout, missing scripts |
+
+### Known follow-ups (active backlog)
+
+- **Tier 1 Phase 5 — blog post.** Acceptance criterion D4 #7. All raw
+  material exists (gallery maps, Olson + California controls, oracle,
+  unreachable-POI diagnostic). Deferred for 2+ weeks while Tier 2 + D5
+  + ferry investigation took priority. **Highest-leverage thing left to
+  ship per the 2026-05-25 architecture review.**
+- **DB expansion (planning doc 04).** Tier 2 shipped without it, on the
+  NPS-only 438-pool. Without OSM + Amtrak + overnight cities, Tier 2's
+  filtering/scoring infrastructure is solver-ready for data that does
+  not yet exist.
+- **Ferry routing.** Two investigation rounds (2026-05-24, 2026-05-25)
+  confirmed the gap is real but unfixable at our layer without either
+  surgical terminal-preservation pipeline work, a different routing
+  engine, or larger build hardware. Documented in CLAUDE.md "KNOWN
+  GAP: ferries" section. Won't-fix on current hardware unless prompted.
+- **Unreachable POIs.** 79 POIs (18% of catalog) with >10% bad pairs in
+  the matrix — see `diagnostics_unreachable_pois.md`. Solver routes
+  around them, so the Tier 1 headline holds, but a Tier 2 trip filtered
+  to e.g. "California national parks" would surface this visibly.
+- **Web frontend.** Self-acknowledged "clumsy, redundant, confusing" in
+  `CLAUDE.md` lines 308–312. Maintenance cost ~444 LOC + tests. Scope
+  decision pending: keep / hide-behind-flag / delete.
 
 ## Tier 2 Phase 2 COMPLETE — Cross-border routing (2026-05-23)
 

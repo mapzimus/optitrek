@@ -1,6 +1,6 @@
 # Optitrek
 
-An algorithmic road-trip optimizer for the United States. A 2026 redo of Randal Olson's 2015 "optimal road trip" project — with a 400-stop candidate pool (Tier 1) growing to 100,000+ (Tier 2/3), a real constrained optimizer (OR-Tools), open-source self-hosted routing (OSRM), and an interactive web map (Folium).
+An algorithmic road-trip optimizer for the United States. A 2026 redo of Randal Olson's 2015 "optimal road trip" project — with a 438-stop candidate pool of National Park Service units (Tier 1, NPS-only; planned DB expansion to ~100,000 stops via OSM + Amtrak + overnight cities for Tier 2 is on the roadmap but not yet built), a real constrained optimizer (OR-Tools), open-source self-hosted routing (OSRM), and an interactive web map (Folium).
 
 ## Planning documents
 
@@ -68,20 +68,56 @@ After Phase 1 succeeds (every contiguous state + DC has ≥1 NPS unit), the next
 
 ```
 optitrek/
-├── 01-…08-OPTITREK-*.md   # planning docs (source of truth)
-├── DECISIONS.md           # locked decisions
-├── README.md              # this file
+├── 01-…08-OPTITREK-*.md     # planning docs (source of truth)
+├── DECISIONS.md             # locked decisions (D1–D5 + follow-ups)
+├── BUILD_STATUS.md          # live state of the project
+├── CLAUDE.md                # AI agent operating manual
+├── README.md                # this file
+├── HANDOVER.md              # historical 2026-05-18 handover
+├── diagnostics_unreachable_pois.md  # 79 POIs >10% bad-pair rate report
 ├── requirements.txt
 ├── .env.example
-├── docker-compose.yml     # stub for OSRM (Phase 2)
+├── .gitattributes           # LF lock for *.sh and *.py
+├── docker-compose.yml       # stub (Docker Desktop is broken; use WSL docker)
 ├── src/
-│   ├── db.py              # DB connection helper
-│   ├── schema.sql         # PostGIS DDL
-│   ├── data_pull.py       # Phase 1A: NPS → PostGIS
-│   └── spatial_join.py    # Phase 1B: state assignment + coverage gate
+│   ├── db.py                # Neon Postgres connection (psycopg v3)
+│   ├── schema.sql           # PostGIS DDL (idempotent)
+│   ├── data_pull.py         # Phase 1A: NPS API → PostGIS
+│   ├── spatial_join.py      # Phase 1B: state assignment + coverage gate
+│   ├── matrix_builder.py    # Phase 2: OSRM /table → parquet matrices
+│   ├── solver.py            # Phase 3: OR-Tools VRP solver + Tier 2 modes
+│   ├── visualize.py         # Phase 4: Folium maps with per-leg polylines
+│   ├── config.py            # Tier 2 TripConfig YAML loader + validation
+│   ├── poi_query.py         # Tier 2 POI fetch with filters
+│   ├── trip.py              # Tier 2 orchestrator (config → matrix → solve → render)
+│   ├── run_tier1.py         # Tier 1 glue (capped + uncapped solve, both maps)
+│   ├── border_crossing.py   # D5 follow-up: customs-time penalty
+│   └── web/                 # Stage 1 FastAPI form (local-dev only; UX known clumsy)
+├── scripts/                 # ops + analysis + diagnostic tooling (~30 files)
+│   ├── filter_pbf.sh        # tag-filter US PBF to major roads
+│   ├── build_osrm.sh        # 3-stage OSRM build (extract/partition/customize)
+│   ├── build_na_osrm.sh     # combined US+Canada OSRM build (D5)
+│   ├── run_tier1_local.sh   # full Tier 1 orchestration
+│   ├── run_oracle.sh        # Tier 1 oracle replay via tier1_replica.yaml
+│   ├── run_trip.py          # Tier 2 CLI entrypoint
+│   ├── test_tier1_replica.py  # Tier 1 oracle (±0.5% drift check)
+│   ├── probe_ak_optin.py    # verify AK opt-in candidate counts (D5 follow-up)
+│   ├── diagnose_unreachable_pois.py  # surface high-unreachability POIs
+│   ├── olson_control.py     # Control 1: OR-Tools on Olson's 50 stops
+│   ├── california_control.py # Control 2: force 2 CA stops in 438-pool
+│   ├── olson_route_diff.py  # Olson 2015 vs OR-Tools edge-by-edge diff
+│   ├── visual_proof.py      # 8-leg Western parks Folium overlay
+│   ├── smoke_test_na_engine.sh  # cross-border engine smoke test
+│   ├── render_comparison_map.py # dual-engine route overlay (US vs US+Canada)
+│   └── …                    # other dump/fetch/render helpers
+├── trips/                   # Tier 2 YAML configs (tier1_replica + ~9 example trips)
+├── tests/                   # 121 tests (pytest, runs in ~2:30)
+├── gallery/                 # showcase Folium maps + screenshots
 ├── data/
-│   ├── nps_raw/           # raw API responses (gitignored)
-│   ├── boundaries/        # Census TIGER shapefiles (gitignored)
-│   └── matrix/            # cached OSRM matrices (gitignored, Phase 2)
-└── output/                # Folium maps (gitignored, Phase 4)
+│   ├── nps_raw/             # raw API responses (gitignored)
+│   ├── boundaries/          # Census TIGER shapefiles (gitignored)
+│   ├── matrix/              # cached OSRM matrices (gitignored)
+│   ├── osrm-major/          # US-only OSRM artifacts (gitignored, ~5 GB)
+│   └── osrm-major-na/       # US+Canada OSRM artifacts (gitignored, ~5.6 GB)
+└── output/                  # Folium maps (gitignored, Phase 4)
 ```

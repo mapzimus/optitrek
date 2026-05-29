@@ -93,7 +93,7 @@ End-to-end effect (`scripts/probe_ak_optin.py`):
 - `routing_network='us'` → 437 candidates, 0 in AK (preserves Tier 1 oracle exactly)
 - `routing_network='us_canada'` → 456 candidates, 19 in AK (Denali, Wrangell-St. Elias, Gates of the Arctic, Glacier Bay, …)
 
-Tier 1's `matrix_builder.EXCLUDED_STATES = {"AK", "HI"}` stays unconditional because Tier 1 always runs on the US-only engine. The conditional logic lives only in Tier 2's `src/poi_query.py:_excluded_states_for_config()`.
+Tier 1's `matrix_builder.EXCLUDED_STATES = {"AK", "HI", "PR", "VI", "GU", "MP", "AS"}` stays unconditional because Tier 1 always runs on the US-only engine (D3). Territories (PR/VI/GU/MP/AS) were added defensively after the AK opt-in landed; only PR currently has an NPS unit, but VI/GU/MP/AS could appear in future pulls and would silently waste OSRM `/table` calls or sit as phantom nodes in the solver search space (none are in `REQUIRED_STATES` in `src/run_tier1.py`). The conditional AK opt-in logic lives only in Tier 2's `src/poi_query.py:_excluded_states_for_config()`.
 
 Why this matters: an AK-anchored trip (e.g., `must_include` Denali, depot in Seattle) is now solver-reachable but extremely expensive (~50 h one-way drive on top of intra-AK travel). The time-budgeted solver's economy handles it correctly — an AK POI's priority value must outweigh several hundred priority-points-worth of drive time to be picked.
 
