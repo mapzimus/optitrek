@@ -41,11 +41,9 @@
   NPS-only 438-pool. Without OSM + Amtrak + overnight cities, Tier 2's
   filtering/scoring infrastructure is solver-ready for data that does
   not yet exist.
-- **Ferry routing.** Two investigation rounds (2026-05-24, 2026-05-25)
-  confirmed the gap is real but unfixable at our layer without either
-  surgical terminal-preservation pipeline work, a different routing
-  engine, or larger build hardware. Documented in CLAUDE.md "KNOWN
-  GAP: ferries" section. Won't-fix on current hardware unless prompted.
+- **Ferry routing.** Won't-fix on current hardware — full record (two
+  investigation rounds, root-cause proof, escape hatches) consolidated
+  in `DECISIONS.md` D6.
 - **Unreachable POIs.** 79 POIs (18% of catalog) with >10% bad pairs in
   the matrix — see `diagnostics_unreachable_pois.md`. Solver routes
   around them, so the Tier 1 headline holds, but a Tier 2 trip filtered

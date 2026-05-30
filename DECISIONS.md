@@ -99,6 +99,38 @@ Why this matters: an AK-anchored trip (e.g., `must_include` Denali, depot in Sea
 
 ---
 
+## Known Limitations (won't-fix)
+
+### D6 — Ferry routing: won't-fix on current hardware (investigated 2026-05-24 & 2026-05-25)
+**Source:** Surfaced during Tier 1 connectivity diagnostics, *after* `08-OPTITREK-GAP-AUDIT.md` was written — so there is no gap-audit entry to link back to. This D6 is the canonical record; it consolidates a two-round investigation that previously lived in a long `CLAUDE.md` agent-guidance section plus a `BUILD_STATUS.md` bullet.
+
+**Symptom.** OSRM's graph cannot route over most car-carrying ferries — it drives *around* them, which inflates a handful of legs badly:
+
+| Leg | Current routing | Ferry-aware engine should give |
+|---|---|---|
+| Seattle Ferry Term → Bainbridge | 92.1 mi / 126.6 min | ~12 mi / ~35–45 min |
+| Bridgeport CT → Port Jefferson NY | 99.1 mi / 137.5 min | ~15 mi / ~75–90 min |
+| Burlington VT → Port Kent NY | 96.0 mi / 123.1 min | ~15 mi / ~45–60 min |
+| Bellingham WA → Whittier AK (NA :5001) | 2,334 mi / 50.6 h | varies (ferry vs Alcan) |
+
+(Drive distances/durations captured 2026-05-24.)
+
+**Root cause — the graph build, not the filter.** `osrm-extract` only creates an edge between two ways that share a node. The Cross Sound ferry IS present in the filtered PBF as way `w54689694` ("Bridgeport, CT - Port Jefferson, NY", `route=ferry`, `motor_vehicle=yes`), but its terminal nodes reach the road network only through `highway=service`/`residential` ways — exactly the classes the major-roads filter strips. The ferry survives the filter as a *disconnected component*: present on the map, unreachable by the router. `/route?steps=true` confirms it — a "Ferry Access Road" step (0.1 mi) for the road approach, then no ferry edge. (Washington State Ferries happen to work because WSF *relations* carry `platform`/dock ways that share nodes with surviving highways — luck, not design.) This is the **same disconnection mechanism** that strands the 79 poorly-connected POIs in `diagnostics_unreachable_pois.md`: islands and ferry terminals are graph islands in a road-only network.
+
+**Two rounds, both dead ends:**
+
+1. **Filter edit (2026-05-24) — partial fix, rolled back.** Adding `w/route=ferry` to `scripts/filter_pbf.sh:51` (and `build_na_osrm.sh`'s inline filter) pulled 890 ferry ways into the rebuilt PBF (vs 0 before), and Seattle→Bainbridge dropped to 8.9 mi / 39 min. But Cross Sound, Lake Champlain, and the AMHS still drove around — the filter was never the binding constraint. Rolled back per the "no partial fixes" policy. `r/route=ferry` would not help either: 193 ferry *relations* exist in source, but Cross Sound is a way (not a relation), and Lake Champlain has neither a way nor a relation in its `(-73.5,44.0)-(-73.0,45.0)` bbox (a separate OSM data gap).
+2. **Broaden the filter (2026-05-25) — OOM, not viable on this hardware.** Adding `highway=service` to keep the terminal connectors blew the PBF from 548 MB to 1.7 GB (3.1×). `osrm-extract` was OOM-killed mid-run on the 24 GB WSL cap — reached "Generating edge-expanded graph representation," died silently around "Edge compression ratio" (~13 min in), and wrote no `.osrm.geometry`/`.osrm.edges`/`.osrm.fileIndex` (only the ~15 MB early sentinels survived). Reproducible; confirmed against the `brontosaurus-osrm-memory-ceiling` ceiling. Raising the `.wslconfig` cap above 24 GB risks re-triggering the 2026-05-21 BSOD — so this is hardware-blocked, not a tuning problem.
+
+**Resolution — won't-fix on current hardware.** Tier 1 visits no island-only park, so the optimizer cost of the dead ferries is small (`diagnostics_unreachable_pois.md`), and the 193.0 h / 9,744 mi oracle is unaffected. **Do not retry either round on BRONTOSAURUS:** the filter edit is a known partial/rolled-back false start, and the broaden-filter OOMs under the 24 GB cap.
+
+**Escape hatches (if ever revisited):**
+- **Surgical terminal preservation** — pre-enumerate every `amenity=ferry_terminal` node, then preserve all ways within ~500 m via `osmium extract --polygon` *before* the major-roads filter. Keeps the PBF small; most promising on-machine option.
+- **A different engine** — Valhalla or GraphHopper may snap ferry approaches without filter surgery. Significant porting work, but moves off the memory ceiling.
+- **A bigger build host** — e.g. a 64 GB GCP `e2-highmem-8`: build artifacts there, transfer local. Reverses the 2026-05-21 migration; ~$0.40/hr while it exists.
+
+---
+
 ## Implementation notes (not blocking decisions, but worth recording)
 
 - **Alaska & Hawaii NPS units** were originally ingested but **excluded from the Tier 1 candidate set**. Hawaii stays excluded (no road). Alaska is **conditionally included** when a trip opts into `routing_network: us_canada` (see D5 follow-up above).
