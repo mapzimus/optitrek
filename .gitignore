@@ -30,6 +30,9 @@ data/matrix/*
 output/*
 !output/.gitkeep
 
+# Logs (runtime output from orchestrator + scripts)
+logs/
+
 # IDE / OS
 .vscode/
 .idea/
