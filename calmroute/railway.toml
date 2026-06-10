@@ -1,0 +1,14 @@
+# Railway service config for the Calm Route API.
+#
+# Required environment variables (set in the Railway dashboard):
+#   DATABASE_URL          Neon PostGIS DSN for the `calmroute` database
+#   CALMROUTE_OSRM_URL    https://<calmroute-osrm-subdomain>  (Cloudflare Tunnel
+#                         to osrm-routed :5002 on BRONTOSAURUS)
+
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
