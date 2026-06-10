@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calm Route — safer routes for anxious drivers</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Calm Route</h1>
+    <p class="tagline">Pick a calmer drive within your time budget — Massachusetts only.</p>
+  </header>
+
+  <form id="route-form">
+    <div class="field">
+      <label for="origin">From</label>
+      <input id="origin" type="text" placeholder="e.g. Lynn English High School" required>
+    </div>
+    <div class="field">
+      <label for="destination">To</label>
+      <input id="destination" type="text" placeholder="e.g. Salem State University" required>
+    </div>
+    <div class="field buffer-field">
+      <label for="buffer">Extra time I'll accept: <output id="buffer-out">10</output> min</label>
+      <input id="buffer" type="range" min="0" max="20" value="10" step="1">
+    </div>
+    <button type="submit" id="go">Find calmer routes</button>
+  </form>
+
+  <div id="status" hidden></div>
+  <div id="warnings" hidden></div>
+
+  <main id="results" hidden>
+    <div id="map"></div>
+    <aside id="cards"></aside>
+  </main>
+
+  <footer>
+    <p>
+      Calm Route is informational only. Safety scores are computed from historical and
+      public data (MassDOT crash records, National Weather Service forecasts, Mass511
+      events) and are <strong>not a guarantee of safety</strong>. Crash history does not
+      predict future risk. Always drive to current conditions.
+    </p>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

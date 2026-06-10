@@ -61,6 +61,11 @@ async def geocode(client: httpx.AsyncClient, query: str) -> dict:
                 headers={"User-Agent": config.USER_AGENT},
                 timeout=config.HTTP_TIMEOUT_S,
             )
+            if resp.status_code == 429:
+                # Public Nominatim throttles aggressively; give it real room.
+                last_error = GeocodeError("Geocoder is rate-limiting us")
+                await asyncio.sleep(5.0 * (attempt + 1))
+                continue
             resp.raise_for_status()
             results = resp.json()
             break
