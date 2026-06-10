@@ -24,3 +24,9 @@ CREATE INDEX IF NOT EXISTS idx_pois_category ON pois (category);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_pois_nps_park_code
     ON pois ((tags->>'park_code'))
     WHERE source = 'nps';
+
+-- Upsert key for OSM rows: "type/id" (e.g. 'node/123') stored in tags by
+-- src/osm_load.py. Same partial-index pattern as the NPS key.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pois_osm_id
+    ON pois ((tags->>'osm_id'))
+    WHERE source = 'osm';

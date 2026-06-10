@@ -1,6 +1,30 @@
 # OSRM US Build — Status Snapshot
 
-**Last updated:** 2026-05-25 — doc sync + ferry investigation closed (won't-fix-without-hardware)
+**Last updated:** 2026-06-10 — DB expansion Phase 1+3 pipeline landed (code; live pull not yet run)
+
+## DB expansion pipeline landed (2026-06-10, branch `claude/project-expansion-pois-ufzjmo`)
+
+Implements planning doc 04 Phases 1 (OSM tourist attractions) and 3
+(overnight cities) as two new modules mirroring the Tier 1 pull/join split:
+
+- `src/osm_pull.py` — Overpass extraction: 14 tag queries × 49 zones,
+  1 req/s throttle, retry/backoff, raw responses cached in `data/osm_raw/`
+  (resumable), spec §1.3 discard rules, population filter for
+  `overnight_city`, output `data/osm_parsed/osm_pois.jsonl`.
+- `src/osm_load.py` — COPY into `osm_staging`, NPS dedup (500 m +
+  levenshtein/trigram, NPS wins, decisions → `dedup_log.csv`), upsert into
+  `pois` on a new `uq_pois_osm_id` partial index, TIGER spatial join,
+  validation report → `data/osm_parsed/validation_report.md`.
+- 24 new tests (`test_osm_pull.py`, `test_osm_load.py`); query shapes
+  verified live against overpass-api.de (DE zoos + DE-bbox places).
+
+**Not yet done:** the actual ~700-query live pull + load against Neon
+(1–2 h, run from a box with stable network — see CLAUDE.md commands),
+Phase 2 Amtrak GTFS, doc-04 Phase 4/5 taxonomy + final report, and the
+Tier 2 wiring decision: `poi_query.build_query()` still hardcodes
+`source = 'nps'`, so OSM rows are invisible to trips until a deliberate
+sources/filter design is chosen (candidate-pool size control matters —
+an unfiltered 100k-POI pool is matrix-infeasible).
 
 ## Current snapshot (2026-05-25)
 
@@ -37,10 +61,9 @@
   unreachable-POI diagnostic). Deferred for 2+ weeks while Tier 2 + D5
   + ferry investigation took priority. **Highest-leverage thing left to
   ship per the 2026-05-25 architecture review.**
-- **DB expansion (planning doc 04).** Tier 2 shipped without it, on the
-  NPS-only 438-pool. Without OSM + Amtrak + overnight cities, Tier 2's
-  filtering/scoring infrastructure is solver-ready for data that does
-  not yet exist.
+- **DB expansion (planning doc 04).** Phase 1+3 pipeline code landed
+  2026-06-10 (see section above); live pull/load, Amtrak (Phase 2), and
+  Tier 2 source wiring still open.
 - **Ferry routing.** Won't-fix on current hardware — full record (two
   investigation rounds, root-cause proof, escape hatches) consolidated
   in `DECISIONS.md` D6.

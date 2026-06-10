@@ -19,6 +19,8 @@ data/nps_raw/*.json
 data/nps_raw/*.csv
 data/boundaries/*
 data/matrix/*
+data/osm_raw/*
+data/osm_parsed/*
 !data/**/.gitkeep
 
 # OSRM extracts (huge)
