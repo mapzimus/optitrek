@@ -1,0 +1,57 @@
+# Calm Route — OSRM routing engine (Massachusetts extract)
+#
+# Pattern borrowed from the Optitrek repo's docker-compose.yml, but this
+# project uses its OWN container, data dir, and port. Port 5002 is chosen
+# deliberately: optitrek-osrm-major owns 5000 and optitrek-osrm-na owns 5001
+# on BRONTOSAURUS. Never reuse those.
+#
+# Bring-up:
+#   1. curl -L -o data/massachusetts-latest.osm.pbf \
+#        https://download.geofabrik.de/north-america/us/massachusetts-latest.osm.pbf
+#   2. docker compose run --rm osrm-build-extract
+#      docker compose run --rm osrm-build-partition
+#      docker compose run --rm osrm-build-customize
+#   3. docker compose up -d osrm
+#
+# Health check (Lynn English HS area -> Salem State area, alternatives on):
+#   curl "http://localhost:5002/route/v1/driving/-70.9495,42.4668;-70.8967,42.5018?alternatives=3&overview=false"
+
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: calmroute-osrm
+    command: osrm-routed --algorithm mld --max-matching-size 5000 /data/massachusetts-latest.osrm
+    volumes:
+      - ./data:/data
+    ports:
+      - "5002:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://localhost:5000/route/v1/driving/-71.06,42.36;-71.06,42.36' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # One-shot build stages. MA extract is small (~300 MB PBF, ~1 GB artifacts);
+  # builds fine in <8 GB RAM — no BRONTOSAURUS memory-ceiling concerns here.
+  osrm-build-extract:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: osrm-extract -p /opt/car.lua /data/massachusetts-latest.osm.pbf
+    volumes:
+      - ./data:/data
+    profiles: ["build"]
+
+  osrm-build-partition:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: osrm-partition /data/massachusetts-latest.osrm
+    volumes:
+      - ./data:/data
+    profiles: ["build"]
+
+  osrm-build-customize:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: osrm-customize /data/massachusetts-latest.osrm
+    volumes:
+      - ./data:/data
+    profiles: ["build"]
