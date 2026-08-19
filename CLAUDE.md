@@ -32,6 +32,14 @@ python -m pytest tests/test_solver.py::test_capped_visits_all_states  # single t
 python -m src.data_pull                            # NPS API → pois table
 python -m src.spatial_join                         # state assignment + coverage gate
 
+# DB expansion (doc 04 Phases 1+3) — OSM attractions + overnight cities
+python -m src.osm_pull                             # Overpass → data/osm_parsed/osm_pois.jsonl
+                                                   # (~700 queries, 1-2 h; resumable — raw
+                                                   #  responses cached in data/osm_raw/)
+python -m src.osm_load                             # dedup vs NPS + upsert + spatial join +
+                                                   # validation report (needs spatial_join's
+                                                   # TIGER staging table in the DB)
+
 # Phase 2-4 — full Tier 1 pipeline (needs OSRM up locally)
 ./scripts/run_tier1_local.sh                       # orchestrates: docker run osrm-routed,
                                                    # wait for ready, spot-check, matrix build,
@@ -121,6 +129,12 @@ Phase 4: SolveResult + OSRM /route ──► Folium HTML
 - `src/visualize.py` — Folium rendering. Fetches per-leg polylines from OSRM `/route` at
   render time and decodes them with the `polyline` library. Falls back to straight lines
   if OSRM is unreachable (the map still renders for debugging).
+- `src/osm_pull.py` / `src/osm_load.py` — DB expansion (doc 04 Phases 1+3). Pull is
+  network-only (Overpass → `data/osm_parsed/osm_pois.jsonl`, no DB); load is DB-only
+  (staging COPY, NPS dedup where NPS wins, upsert keyed on `tags->>'osm_id'`, TIGER
+  spatial join, validation report). OSM rows are NOT yet visible to Tier 2 —
+  `poi_query.build_query()` hardcodes `source = 'nps'` until the candidate-pool design
+  for ~100k POIs is decided (an unfiltered pool that size is matrix-infeasible).
 - `src/matrix_builder.py` — Batches OSRM `/table` calls (default 100 sources/req). Writes
   `pois.parquet` with one row per POI and two N×N float32 matrices (duration in seconds,
   distance in meters). Runs `validate_matrix()` at the end and warns if any row has >10%
