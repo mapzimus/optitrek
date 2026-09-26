@@ -21,6 +21,8 @@ data/boundaries/*
 data/matrix/*
 data/osm_raw/*
 data/osm_parsed/*
+data/census/*
+data/random_walk/*
 !data/**/.gitkeep
 
 # OSRM extracts (huge)

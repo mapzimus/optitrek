@@ -1,6 +1,29 @@
 # OSRM US Build — Status Snapshot
 
-**Last updated:** 2026-06-10 — DB expansion Phase 1+3 pipeline landed (code; live pull not yet run)
+**Last updated:** 2026-09-26 — random-walk-through-every-town script landed (code; not yet run on BRONTOSAURUS)
+
+## Random walk through every town (2026-09-26, branch `claude/project-reassess-osm-ideas-ubd6vh`)
+
+The anti-optimizer. Every Census 2020 place in the lower 48 + DC (31,099),
+shuffled with a fixed seed, driven center-to-center in that order. No solver,
+no matrix — N−1 sequential OSRM `/route` calls, so it runs on the current
+major-roads-only graph without the matrix or unreachable-POI problems that
+block the 100k-POI expansion.
+
+- `src/random_walk.py` — Gazetteer download + parse, seeded shuffle,
+  `/table` reachability pre-pass against the town nearest the CONUS center
+  (drops island / disconnected towns), resumable `/route` loop appending to
+  `data/random_walk/seed<N>/legs.jsonl`, `summary.json` with totals, leg
+  stats, snap distances, and ratios vs Olson / Tier 1.
+- `scripts/run_random_walk.sh` — OSRM container lifecycle wrapper (same as
+  `run_oracle.sh`); all args pass through (`--seed`, `--limit`, `--overview`).
+- `tests/test_random_walk.py` — 11 tests, no network.
+
+**Not yet done:** the real run (`./scripts/run_random_walk.sh --seed 42`,
+est. <1 h of OSRM time from WSL), and the render. Folium can't draw 31k
+cross-country lines; this needs the static Albers path at very low alpha.
+Decide the render after the numbers exist.
+
 
 ## DB expansion pipeline landed (2026-06-10, branch `claude/project-expansion-pois-ufzjmo`)
 
