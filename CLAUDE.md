@@ -40,6 +40,11 @@ python -m src.osm_load                             # dedup vs NPS + upsert + spa
                                                    # validation report (needs spatial_join's
                                                    # TIGER staging table in the DB)
 
+# Random walk through every town (anti-optimizer; needs OSRM up, or use the wrapper)
+./scripts/run_random_walk.sh --seed 42 --limit 200   # smoke test
+./scripts/run_random_walk.sh --seed 42               # full 31k-town walk, resumable
+python -m src.random_walk --seed 42                  # same, if OSRM is already up
+
 # Phase 2-4 — full Tier 1 pipeline (needs OSRM up locally)
 ./scripts/run_tier1_local.sh                       # orchestrates: docker run osrm-routed,
                                                    # wait for ready, spot-check, matrix build,
@@ -135,6 +140,11 @@ Phase 4: SolveResult + OSRM /route ──► Folium HTML
   spatial join, validation report). OSM rows are NOT yet visible to Tier 2 —
   `poi_query.build_query()` hardcodes `source = 'nps'` until the candidate-pool design
   for ~100k POIs is decided (an unfiltered pool that size is matrix-infeasible).
+- `src/random_walk.py` — The anti-optimizer: every Census place in the lower 48 + DC
+  (31,099), seeded shuffle, driven center-to-center in that order via sequential OSRM
+  `/route` calls. No DB, no solver, no matrix. `/table` reachability pre-pass drops
+  island towns. Resumable (append-only `legs.jsonl`); `--limit N` for smoke tests.
+  Output under `data/random_walk/seed<N>/` (gitignored).
 - `src/matrix_builder.py` — Batches OSRM `/table` calls (default 100 sources/req). Writes
   `pois.parquet` with one row per POI and two N×N float32 matrices (duration in seconds,
   distance in meters). Runs `validate_matrix()` at the end and warns if any row has >10%
